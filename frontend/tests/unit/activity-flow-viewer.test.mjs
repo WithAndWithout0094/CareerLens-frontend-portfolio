@@ -453,6 +453,33 @@ test('server run history shows recorded event times and remains stable across po
   } finally { ui.dispose(); }
 });
 
+test('persisted browser occurrence times survive switching local and live modes', async () => {
+  const ui = await viewerFixture({ central: true });
+  const source = { stream: 'browser-stream-1234', publisher: `browser:${'a'.repeat(32)}`,
+    kind: 'snapshot', provenance: 'browser_reported', connected: true, session: { mode: 'member' } };
+  const recorded = [requestEvent('request-one', 'complete', 30000, 20),
+    requestEvent('request-two', 'complete', 90000, 25)];
+  try {
+    ui.remote({ ...source, at: 1000000, revision: 1, events: recorded, states: [recorded[1]] }, { snapshot: true, bootstrap: true });
+    ui.connection(); ui.frame();
+    const feed = ui.element('[data-flow-global-feed]').innerHTML;
+    assert.match(feed, /09:00:30/);
+    assert.match(feed, /09:01:30/);
+    assert.doesNotMatch(feed, /09:16:40/);
+
+    ui.mode('local');
+    ui.mode('live');
+    ui.remote({ ...source, at: 1060000, revision: 2, events: recorded, states: [recorded[1]] }, { snapshot: true, bootstrap: true });
+    ui.connection(); ui.frame();
+    assert.equal(ui.element('[data-flow-global-feed]').innerHTML, feed, 'restored history retains each original time, not the reconnect heartbeat');
+    assert.equal(ui.element('[data-flow-event-count]').textContent, '2');
+
+    ui.remote({ ...source, at: 1120000, revision: 3, events: recorded, states: [recorded[1]] });
+    ui.frame();
+    assert.equal(ui.element('[data-flow-global-feed]').innerHTML, feed, 'later heartbeats also preserve occurrence times');
+  } finally { ui.dispose(); }
+});
+
 test('old global rows stay evicted when a source heartbeat repeats history while actual snapshot changes remain visible', async () => {
   const ui = await viewerFixture({ central: true });
   const a = { stream: 'stream-a-1234', publisher: 'browser:publisher-a-1234' };

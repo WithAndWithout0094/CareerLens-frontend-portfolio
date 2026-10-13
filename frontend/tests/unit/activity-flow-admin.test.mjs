@@ -111,6 +111,18 @@ test('three independent active runs remain separate with only allowlisted metada
     assert.ok(selected.events.every((event) => event.id.startsWith(selected.stream)));
   }
 });
+
+test('reopening the monitor prefers latest user activity, not latest heartbeat or background request', () => {
+  const sources = createLiveFlowSources({ central: true, now: () => 100000 });
+  const recent = browserEnvelope({ ...browser([action('recent', 300)]), at: 1000 }, 1);
+  const older = browserEnvelope({ ...browser([action('older', 100), { ...action('poll', 900, 'api_jobs'), kind: 'request' }]),
+    publisher: 'browser:' + 'b'.repeat(32), at: 9000 }, 1);
+  assert.equal(recent.activity_at, 300);
+  assert.equal(older.activity_at, 100);
+  sources.receive(recent, { bootstrap: true });
+  sources.receive(older, { bootstrap: true });
+  assert.equal(sources.snapshot().key, recent.publisher);
+});
 test('terminal run removes unfinished active highlights without inventing successes', () => {
   const failed = runEnvelope(run('1', 'failed'), 1);
   assert.deepEqual(failed.states.map((event) => [event.node, event.state]), [['analysis', 'failed']]);

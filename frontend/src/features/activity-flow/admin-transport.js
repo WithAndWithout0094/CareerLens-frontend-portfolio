@@ -50,8 +50,10 @@ export function browserEnvelope(value, revision) {
     .map((event) => ({ ...event, source: 'observed' }));
   const clean = cleanFlowEnvelope({ ...value, events: observed(value.events), states: observed(value.states) });
   if (!clean) return null;
+  const actions = clean.events.filter((event) => ['action', 'navigation', 'session'].includes(event.kind));
+  const activityAt = Math.max(0, ...(actions.length ? actions : clean.events).map((event) => event.at));
   return { ...clean, revision, stream: value.stream, publisher: value.publisher,
-    connected: value.connected === true, provenance: 'browser_reported', activity_at: clean.at,
+    connected: value.connected === true, provenance: 'browser_reported', activity_at: activityAt,
     active: clean.states.some((event) => ['pending', 'running', 'queued'].includes(event.state)),
   };
 }
