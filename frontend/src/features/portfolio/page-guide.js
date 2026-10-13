@@ -44,13 +44,13 @@ export function placeCallouts(items, { width, height, bottom = 64 }) {
 let previousRoute;
 let disposeGuide;
 
-export function showPageGuide(route, { session, force = false, document: doc = globalThis.document } = {}) {
+export function showPageGuide(route, { session, section, force = false, document: doc = globalThis.document } = {}) {
   if (!doc?.body) return () => {};
-  const key = route + ':' + (session?.user ? 'member' : 'guest');
+  const key = route + ':' + (session?.user ? 'member' : 'guest') + ':' + (section || '');
   if (!force && key === previousRoute) return disposeGuide || (() => {});
   disposeGuide?.();
   previousRoute = key;
-  const guide = guideForRoute(route, { session });
+  const guide = guideForRoute(route, { session, section });
   const win = doc.defaultView || globalThis.window;
   const host = doc.createElement('div');
   host.className = 'page-guide';
@@ -135,7 +135,7 @@ export function showPageGuide(route, { session, force = false, document: doc = g
     if (changes.some((change) => !host.contains(change.target) && change.target !== host)) schedule();
   }) : null;
   // Async responses can replace the entire page while its guide remains open.
-  observer?.observe(doc.getElementById('app') || doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
+  observer?.observe(doc.getElementById('app') || doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open'] });
   const resized = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(schedule) : null;
   resized?.observe(doc.getElementById('app') || doc.body);
   function close() {

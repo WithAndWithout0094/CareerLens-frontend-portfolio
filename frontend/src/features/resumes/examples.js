@@ -70,7 +70,7 @@ export function filterResumeExamples(items, query) {
   });
 }
 
-export function bindResumeExamples({ hasContent, onSelect, onError }) {
+export function bindResumeExamples({ hasContent, onSelect, onError, onOpen }) {
   const panel = document.getElementById('resume-examples');
   if (!panel) return;
 
@@ -187,6 +187,8 @@ export function bindResumeExamples({ hasContent, onSelect, onError }) {
         page = 1;
         renderCards();
       });
+      // Also covers successful retries; never show after closing or navigating away.
+      if (current() && panel.open) onOpen?.();
     } catch (error) {
       if (!current() || error.name === 'AbortError') return;
       list.innerHTML = `
@@ -222,6 +224,8 @@ export function bindResumeExamples({ hasContent, onSelect, onError }) {
     }
   });
   panel.addEventListener('toggle', () => {
-    if (panel.open) load();
+    if (!panel.open) return;
+    if (loaded && current()) onOpen?.();
+    else load();
   });
 }

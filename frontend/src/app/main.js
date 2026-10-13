@@ -852,6 +852,7 @@ function render({ reportBridge } = {}) {
     if (page === 'resume' && session.user)
       bindResumeExamples({
         hasContent: () => Boolean(draftForPage('resume', workspace.draft, edits).resume_text),
+        onOpen: () => showPageGuide('resume', { session, section: 'resume-examples', force: true }),
         onSelect: async (example) => {
           const revision = viewRevision;
           const owner = session.user?.id;

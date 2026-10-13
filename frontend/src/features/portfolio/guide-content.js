@@ -162,8 +162,17 @@ function postingEditorHints(session) {
 
 const authTitles = { login: '로그인 방법', email: '이메일 로그인', signup: '회원가입', forgot: '비밀번호 찾기', reset: '비밀번호 재설정' };
 
-export function guideForRoute(route = 'intro', { session } = {}) {
+export function guideForRoute(route = 'intro', { session, section } = {}) {
   const base = String(route).replace(/^#\//, '').split('?')[0] || 'intro';
+  if (base === 'resume' && section === 'resume-examples' && memberOf(session)) return {
+    title: '가상 이력서 체험',
+    items: [
+      hint('example-search', '직무·기술·경력 검색', '검색어를 입력하면 해당하는 가상 이력서만 표시됩니다.', ['#resume-examples[open] [data-example-search]'], 'bottom'),
+      hint('example-random', '무작위로 체험하기', '현재 검색 결과 중 하나를 무작위로 골라 내 계정의 이력서로 저장합니다.', ['#resume-examples[open] [data-resume-random]'], 'left'),
+      hint('example-select', '직접 골라 불러오기', '원하는 카드의 이 버튼을 누르면 이력서가 저장됩니다. 기존 내용이 있으면 교체 여부를 먼저 확인합니다.', ['#resume-examples[open] [data-resume-example]'], 'right'),
+      hint('example-pages', '다른 가상 이력서 보기', '이전·다음 버튼으로 다른 이력서들을 확인합니다. 검색 결과가 없으면 검색어를 바꿔 보세요.', ['#resume-examples[open] .resume-example-pagination'], 'top'),
+    ],
+  };
   const key = base.startsWith('reports/') ? 'result'
     : base === 'jobs/new' || /^jobs\/[^/]+\/edit$/.test(base) ? 'posting-editor'
     : /^jobs\/[^/]+$/.test(base) ? 'job-detail'
