@@ -49,6 +49,7 @@ export async function mountMemberFlow(root, {
   const reconnect = () => {
     stopWatching();
     clearRetry();
+    dismissPageGuide();
     // Membership is currently unknown. Hide the old view until a fresh /me
     // check succeeds, but do not misrepresent a server restart as a logout.
     dispose?.();
