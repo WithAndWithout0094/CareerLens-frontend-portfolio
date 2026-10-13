@@ -16,6 +16,17 @@ test('every product route presents its own features together and explains public
   assert.match(guideForRoute('intro').items.flat().join(' '), /팀의 기존 분석 백엔드/);
 });
 
+test('the flow guide describes its actual app-tab and My Page links instead of a nonexistent login menu', () => {
+  for (const session of [{ user: null }, { user: { id: 'member' } }]) {
+    const text = guideForRoute('flow', { session }).items.flat().join(' ');
+    assert.match(text, /CareerLens 새 앱 탭 열기/);
+    assert.match(text, /이력서 화면이 새 탭으로/);
+    assert.match(text, /오른쪽 위 마이페이지 링크/);
+    assert.doesNotMatch(text, /오른쪽 위 계정 메뉴|로그인 버튼|로그아웃으로/);
+  }
+  assert.match(guideForRoute('resume', { session: { user: null } }).items.flat().join(' '), /오른쪽 위 로그인 버튼/);
+});
+
 function guideDocument() {
   const listeners = new Map(), classes = new Set(), children = [];
   const app = { inert: false };

@@ -14,7 +14,7 @@ function harness() {
   const content = { innerHTML: '', setAttribute() {} };
   const announcement = { textContent: '' };
   const refresh = {};
-  let timer, cleared = false;
+  let timer, interval, cleared = false;
   const windowObject = {
     document: {
       visibilityState: 'visible',
@@ -23,7 +23,7 @@ function harness() {
     },
     addEventListener: (name, fn) => windowHandlers.set(name, fn),
     removeEventListener: (name) => windowHandlers.delete(name),
-    setInterval: (fn) => { timer = fn; return 1; },
+    setInterval: (fn, delay) => { timer = fn; interval = delay; return 1; },
     clearInterval: () => { cleared = true; },
   };
   const root = {
@@ -39,7 +39,7 @@ function harness() {
     closest: (query) => query === selector ? { dataset } : null,
   } });
   return { root, content, announcement, windowObject, windowHandlers, documentHandlers, click,
-    poll: () => timer(), cleared: () => cleared };
+    poll: () => timer(), interval: () => interval, cleared: () => cleared };
 }
 
 test('selected detail responses cannot cross selections, close, or disposal', async () => {
@@ -84,7 +84,7 @@ test('missing detail refreshes the summary so deleted executions disappear', asy
   cleanup();
 });
 
-test('visible periodic/focus refresh updates totals and stops while hidden or disposed', async () => {
+test('five-second refresh updates totals despite response latency and stops while hidden or disposed', async () => {
   const h = harness();
   const originalNow = Date.now;
   let now = 100000, count = 0;
@@ -92,24 +92,31 @@ test('visible periodic/focus refresh updates totals and stops while hidden or di
   try {
     const cleanup = mountAdminDashboard(h.root, { window: h.windowObject, api: async () => {
       count++;
+      now += 100; // The initial response finishes after the polling timer starts.
       return count === 1 ? summary() : summary(['run-b']);
     } });
     await tick();
-    now += 60000;
+    assert.equal(h.interval(), 5000);
+    now = 105000;
+    h.poll();
+    await tick();
+    assert.equal(count, 2, 'a 100ms response must not delay the first refresh to ten seconds');
+    assert.doesNotMatch(h.content.innerHTML, />run-a</);
+    now += 5000;
     h.windowObject.document.visibilityState = 'hidden';
     h.poll();
-    assert.equal(count, 1);
+    assert.equal(count, 2);
     h.windowObject.document.visibilityState = 'visible';
     h.documentHandlers.get('visibilitychange')();
     await tick();
-    assert.equal(count, 2);
+    assert.equal(count, 3);
     assert.doesNotMatch(h.content.innerHTML, />run-a</);
     h.windowHandlers.get('focus')();
-    assert.equal(count, 2);
+    assert.equal(count, 3);
     cleanup();
-    now += 60000;
+    now += 5000;
     h.poll();
-    assert.equal(count, 2);
+    assert.equal(count, 3);
   } finally { Date.now = originalNow; }
 });
 

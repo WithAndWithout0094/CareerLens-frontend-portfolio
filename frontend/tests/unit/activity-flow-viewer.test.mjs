@@ -362,6 +362,28 @@ test('global feed uses server receipt order and snapshots do not move old traffi
   ui.dispose();
 });
 
+test('server run history shows recorded event times and remains stable across polling', async () => {
+  const ui = await viewerFixture({ central: true, paired: true });
+  const source = { stream: 'worker-a-1234', publisher: 'worker:worker-a-1234', kind: 'snapshot' };
+  const recorded = [{ ...event, id: 'started', at: 30000, node: 'parse_resume' },
+    { ...event, id: 'failed', at: 90000, state: 'failed' }];
+  try {
+    ui.remote({ ...source, at: 1000000, revision: 1, events: recorded, states: [recorded[1]], session: { mode: 'member' } }, { snapshot: true });
+    ui.connection(); ui.frame();
+    const feed = ui.element('[data-flow-global-feed]').innerHTML;
+    assert.match(feed, /09:00:30/);
+    assert.match(feed, /09:01:30/);
+    assert.doesNotMatch(feed, /09:16:40/);
+    assert.equal(ui.cards.get('analysis').dataset.state, 'failed');
+    assert.equal(ui.element('[data-flow-event-count]').textContent, '2');
+    ui.remote({ ...source, at: 1005000, revision: 2, events: recorded, states: [recorded[1]], session: { mode: 'member' } }, { snapshot: true });
+    ui.frame();
+    assert.equal(ui.element('[data-flow-global-feed]').innerHTML, feed);
+    ui.source(source.publisher); ui.frame();
+    assert.equal(ui.cards.get('analysis').dataset.state, 'failed');
+  } finally { ui.dispose(); }
+});
+
 test('old global rows stay evicted when a source heartbeat repeats history while actual snapshot changes remain visible', async () => {
   const ui = await viewerFixture({ central: true });
   const a = { stream: 'stream-a-1234', publisher: 'browser:publisher-a-1234' };

@@ -327,6 +327,14 @@ class RealtimeMonitor:
         rows = sorted(durable.values(), key=lambda row: row.get('created_at') or '', reverse=True)
         for row in rows:
             row.setdefault('events', [])
+            if row['source'] == 'member':
+                # Reading a durable run is not new activity. The run table has
+                # no updated_at column, so derive it only from stored evidence.
+                recorded = [row.get(key) for key in ('created_at', 'started_at', 'completed_at')]
+                recorded.extend(event.get('created_at') for event in row['events'])
+                moments = [datetime.fromisoformat(value) for value in recorded if value]
+                moments = [value if value.tzinfo else value.replace(tzinfo=timezone.utc) for value in moments]
+                row['updated_at'] = max(moments).isoformat() if moments else None
             row.setdefault('user_ref', row['source'] + '-' + sha256(row['run_id'].encode()).hexdigest()[:10])
             row.setdefault('status', 'running')
             row.setdefault('progress_percent', 0)

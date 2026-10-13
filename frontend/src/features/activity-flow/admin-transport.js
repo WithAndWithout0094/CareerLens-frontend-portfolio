@@ -22,7 +22,7 @@ export function runEnvelope(run, revision, now = Date.now()) {
     });
     return event ? [event] : [];
   });
-  const at = timestamp(run.updated_at || run.completed_at || run.started_at || run.created_at);
+  const at = timestamp((terminal.has(run.status) && run.completed_at) || run.updated_at || run.started_at || run.created_at);
   if (at !== null) events.push(normalizeFlowEvent({ id: `${run.run_id}:status`,
     node: run.status === 'queued' ? 'queue' : 'analysis', state: state(run.status),
     source: 'backend', kind: 'progress', at, progress: run.progress_percent,

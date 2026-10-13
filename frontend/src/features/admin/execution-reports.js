@@ -19,7 +19,7 @@ export function renderExecutionReport(report) {
   return `<article class="admin-dashboard__execution-body" aria-label="선택한 실행 보고서"><h3>${e(report.filename || `${report.run_id}.md`)}</h3>${renderMarkdown(report.markdown)}</article>`;
 }
 
-export function mountExecutionReports(root, api, { window: windowObject = globalThis.window, refreshIntervalMs = 15000 } = {}) {
+export function mountExecutionReports(root, api, { window: windowObject = globalThis.window, refreshIntervalMs = 5000 } = {}) {
   const host = root.querySelector('[data-execution-reports]');
   if (!host) return () => {};
   const list = host.querySelector('[data-execution-list]');
@@ -97,12 +97,14 @@ export function mountExecutionReports(root, api, { window: windowObject = global
   }
   const timer = windowObject?.setInterval?.(refreshWhenVisible, refreshIntervalMs);
   windowObject?.addEventListener?.('focus', refreshWhenVisible);
+  windowObject?.document?.addEventListener?.('visibilitychange', refreshWhenVisible);
   return () => {
     disposed = true;
     listRequest?.abort();
     reportRequest?.abort();
     if (timer !== undefined) windowObject?.clearInterval?.(timer);
     windowObject?.removeEventListener?.('focus', refreshWhenVisible);
+    windowObject?.document?.removeEventListener?.('visibilitychange', refreshWhenVisible);
     host.removeEventListener('click', click);
     rows = [];
     list.innerHTML = '';

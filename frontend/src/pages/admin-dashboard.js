@@ -49,7 +49,7 @@ export function adminDashboard(user) {
 export function mountAdminDashboard(root, {
   api = requestApi,
   window: windowObject = root?.ownerDocument?.defaultView ?? globalThis.window,
-  refreshIntervalMs = 60000,
+  refreshIntervalMs = 5000,
 } = {}) {
   const host = root?.matches?.('[data-admin-dashboard]')
     ? root
@@ -59,7 +59,7 @@ export function mountAdminDashboard(root, {
   const announcement = host.querySelector('[data-admin-announcement]');
   const refresh = host.querySelector('[data-admin-refresh]');
   if (!content || !announcement || !refresh) return () => {};
-  const cleanupReports = mountExecutionReports(host, api);
+  const cleanupReports = mountExecutionReports(host, api, { window: windowObject, refreshIntervalMs });
   let days = 30,
     status = 'all',
     selectedIndex = -1,
@@ -259,11 +259,11 @@ export function mountAdminDashboard(root, {
     }
   }
 
-  function syncWhenVisible() {
+  function syncWhenVisible(periodic = false) {
     if (disposed || loading || windowObject?.document?.visibilityState === 'hidden') return;
-    if (Date.now() - lastLoadedAt >= 10000) void load({ silent: true });
+    if (periodic === true || Date.now() - lastLoadedAt >= refreshIntervalMs) void load({ silent: true });
   }
-  const timer = windowObject?.setInterval?.(syncWhenVisible, refreshIntervalMs);
+  const timer = windowObject?.setInterval?.(() => syncWhenVisible(true), refreshIntervalMs);
   windowObject?.addEventListener?.('focus', syncWhenVisible);
   windowObject?.document?.addEventListener?.('visibilitychange', syncWhenVisible);
 

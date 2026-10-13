@@ -6,12 +6,12 @@ const first = '11111111-1111-4111-8111-111111111111';
 const second = '22222222-2222-4222-8222-222222222222';
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const row = (run_id) => ({ run_id, filename: `${run_id}.md` });
-function harness(api) {
+function harness(api, options) {
   const list = { innerHTML: '' }, content = { innerHTML: '' }, status = { textContent: '' }, load = {};
   const nodes = { '[data-execution-list]': list, '[data-execution-content]': content, '[data-execution-status]': status, '[data-execution-load]': load };
   let listener;
   const host = { querySelector: (key) => nodes[key], addEventListener: (_, fn) => { listener = fn; }, removeEventListener: () => { listener = undefined; } };
-  const cleanup = mountExecutionReports({ querySelector: () => host }, api);
+  const cleanup = mountExecutionReports({ querySelector: () => host }, api, options);
   const click = (selector, executionOpen) => listener?.({ target: { closest: (key) => key === selector ? { dataset: { executionOpen } } : null } });
   return { list, content, status, load, click, cleanup };
 }
@@ -87,4 +87,31 @@ test('mismatched report identity and unknown row are never rendered', async () =
   assert.doesNotMatch(h.content.innerHTML, /Wrong account/);
   assert.match(h.content.innerHTML, /불러오지 못했습니다/);
   h.cleanup();
+});
+
+test('report list refreshes every five seconds only while visible and removes timers on exit', async () => {
+  let timer, interval, count = 0, cleared = false;
+  const handlers = new Map();
+  const window = {
+    document: { visibilityState: 'visible', addEventListener: (name, fn) => handlers.set(name, fn), removeEventListener: (name) => handlers.delete(name) },
+    setInterval: (fn, delay) => { timer = fn; interval = delay; return 1; },
+    clearInterval: () => { cleared = true; },
+    addEventListener: (name, fn) => handlers.set(name, fn), removeEventListener: (name) => handlers.delete(name),
+  };
+  const h = harness(async () => { count++; return { reports: count === 1 ? [] : [row(first)] }; }, { window });
+  await tick();
+  assert.equal(interval, 5000);
+  timer(); await tick();
+  assert.equal(count, 2);
+  assert.match(h.list.innerHTML, new RegExp(first));
+  window.document.visibilityState = 'hidden';
+  timer(); await tick();
+  assert.equal(count, 2);
+  window.document.visibilityState = 'visible';
+  handlers.get('visibilitychange')(); await tick();
+  assert.equal(count, 3);
+  h.cleanup(); timer(); await tick();
+  assert.equal(count, 3);
+  assert.equal(cleared, true);
+  assert.equal(handlers.size, 0);
 });

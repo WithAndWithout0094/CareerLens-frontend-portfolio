@@ -78,6 +78,29 @@ async def test_snapshot_uses_persisted_status_after_stale_cache_and_survives_red
 
 
 @pytest.mark.asyncio
+async def test_member_snapshot_preserves_recorded_activity_time_across_polls():
+    class RecordedDB:
+        async def select(self, table, **filters):
+            if table == 'progress_events':
+                return [{'run_id': 'finished', 'stage': 'indexing', 'status': 'running',
+                         'created_at': '2026-10-13T05:30:58+00:00'},
+                        {'run_id': 'active', 'stage': 'parsing', 'status': 'running',
+                         'created_at': '2026-10-13T05:32:00+00:00'}]
+            return [{'id': 'finished', 'status': 'failed', 'created_at': '2026-10-13T05:30:00+00:00',
+                     'started_at': '2026-10-13T05:30:01+00:00', 'completed_at': '2026-10-13T05:31:02+00:00'},
+                    {'id': 'active', 'status': 'running', 'created_at': '2026-10-13T05:31:10+00:00',
+                     'started_at': '2026-10-13T05:31:11+00:00', 'completed_at': None}]
+
+    monitor = make_monitor()
+    for _ in range(2):
+        snapshot = await monitor.snapshot(RecordedDB())
+        rows = {row['run_id']: row for row in snapshot['runs']}
+        assert rows['finished']['updated_at'] == '2026-10-13T05:31:02+00:00'
+        assert rows['active']['updated_at'] == '2026-10-13T05:32:00+00:00'
+        assert rows['finished']['events'][0]['created_at'] == '2026-10-13T05:30:58+00:00'
+
+
+@pytest.mark.asyncio
 async def test_guest_observer_requires_overall_completion_and_never_exposes_payload():
     monitor = make_monitor()
     monitor.record_flow('guest-a', 'queue', 'pending', publisher='PRIVATE')

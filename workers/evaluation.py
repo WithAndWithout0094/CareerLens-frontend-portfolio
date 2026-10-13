@@ -49,11 +49,7 @@ async def process(db, llm, config, run, worker, checkpointer):
         raise
     except Exception as error:
         # Do not log raw exception strings: providers may include credentials or resume text.
-        if isinstance(error, TypeError):
-            # Python serialization errors name the unsupported type, not user content.
-            log.error('Evaluation failed: run=%s type=%s detail=%s', run['id'], type(error).__name__, str(error))
-        else:
-            log.error('Evaluation failed: run=%s type=%s', run['id'], type(error).__name__)
+        log.error('Evaluation failed: run=%s type=%s', run['id'], type(error).__name__)
         updated = await db.update('evaluation_runs', {'status': 'failed', 'failure_reason': type(error).__name__, 'completed_at': datetime.now(timezone.utc).isoformat(), 'lease_expires_at': None},
                         id=f"eq.{run['id']}", worker_id=f'eq.{worker}', status='eq.running')
         if updated and monitor:

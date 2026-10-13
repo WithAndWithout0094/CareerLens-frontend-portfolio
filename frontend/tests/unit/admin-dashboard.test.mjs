@@ -567,7 +567,7 @@ test('scope and freshness clearly identify all-account executions rather than sa
   assert.match(markup, /현재 응답 표본 1건 · 목록 필터 결과 0건/);
   assert.match(markup, /마지막 조회/);
   assert.match(markup, /18:00 KST/);
-  assert.match(markup, /60초마다·화면 복귀 시 자동 갱신/);
+  assert.match(markup, /5초마다·화면 복귀 시 자동 갱신/);
 });
 
 test('original API account scope is correctly reflected in cards, accessibility and explanation', () => {

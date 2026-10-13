@@ -28,6 +28,14 @@ test('terminal run removes unfinished active highlights without inventing succes
   assert.equal(failed.events[0].state, 'running');
   assert.equal(runEnvelope({ ...run('1'), run_id: '<script>' }, 1), null);
 });
+
+test('terminal status uses recorded completion time rather than later snapshot updates', () => {
+  const completed = '2026-10-13T01:00:05Z';
+  const envelope = runEnvelope({ ...run('1', 'failed'), completed_at: completed,
+    updated_at: '2026-10-13T02:00:00Z' }, 1, Date.parse('2026-10-13T03:00:00Z'));
+  assert.equal(envelope.events.at(-1).at, Date.parse(completed));
+  assert.equal(envelope.events[0].at, Date.parse('2026-10-13T01:00:00Z'));
+});
 test('snapshot transport recovers through DB fallback and stops on disposal', async () => {
   const pending = new Map(); let next = 0, calls = 0;
   const statuses = [], envelopes = [];

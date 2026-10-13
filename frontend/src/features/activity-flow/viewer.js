@@ -611,7 +611,10 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
           const event = normalizeFlowEvent(value);
           if (!event) continue;
           const previous = allEvents.findIndex((row) => row.key === change.key && row.event.id === event.id);
-          const receivedAt = data.kind === 'snapshot' && previous >= 0 ? allEvents[previous].receivedAt
+          // Server events carry their recorded time. The snapshot envelope time
+          // is only a freshness heartbeat, not the time every old step happened.
+          const receivedAt = /^(?:worker|guest):/.test(change.key) ? event.at
+            : data.kind === 'snapshot' && previous >= 0 ? allEvents[previous].receivedAt
             : Number.isFinite(data.at) && data.at >= 0 ? data.at : Date.now();
           if (previous >= 0) allEvents.splice(previous, 1);
           allEvents.push({ key: change.key, event, receivedAt });

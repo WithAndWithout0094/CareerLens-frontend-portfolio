@@ -137,3 +137,22 @@ async def test_lease_loss_cancels_execution_without_publishing_a_report(monkeypa
     assert stopped.is_set()
     assert db.rows['0']['status'] == 'running'
     assert not db.events
+
+
+@pytest.mark.asyncio
+async def test_type_error_details_never_reach_worker_logs_or_persisted_failure(monkeypatch, caplog):
+    db = QueueDB(1)
+    run = (await db.rpc('claim_evaluation', {'p_worker': 'owner'}))[0]
+    private_marker = 'synthetic-sensitive-provider-detail'
+
+    async def evaluate(*_args):
+        raise TypeError(private_marker)
+
+    monkeypatch.setattr(worker, 'execute', evaluate)
+    await worker.process(db, None, config(), run, 'owner', None)
+    assert db.rows['0']['status'] == 'failed'
+    assert db.rows['0']['failure_reason'] == 'TypeError'
+    assert 'type=TypeError' in caplog.text
+    assert private_marker not in caplog.text
+    assert private_marker not in repr(db.rows)
+    assert private_marker not in repr(db.events)
