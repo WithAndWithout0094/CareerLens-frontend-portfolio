@@ -1,0 +1,58 @@
+# Environment and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Dependencies and package manager caches
+node_modules/
+.npm/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/install-state.gz
+.pnpm-store/
+
+# Build output and caches
+dist/
+build/
+out/
+.next/
+.nuxt/
+.output/
+.turbo/
+.cache/
+.vite/
+*.tsbuildinfo
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+# Local visual reviews may contain private account/report data.
+output/
+.impeccable/review/
+
+# Logs
+*.log
+
+# Python static server
+__pycache__/
+*.py[cod]
+.venv/
+.runtime/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3-shm
+*.sqlite3-wal
+*.sqlite*
+*.key
+*.pem
+*.eml
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini

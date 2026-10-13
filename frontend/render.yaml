@@ -1,0 +1,5 @@
+# Historical standalone frontend location; not a deployable Blueprint.
+# Fullstack now serves frontend + API + worker with uvicorn app.main:app.
+# Use ../blueprints/team3.yaml for the existing team service, or ../render.yaml
+# for an independent environment. Do not create another frontend service.
+# See ../docs/frontend-integration.md for ports, settings, and guest-result storage.
