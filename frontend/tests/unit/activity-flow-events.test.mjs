@@ -1,12 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createFlowStore, classifyFlowRequest, flowSnapshot, observeFlowProgress, mountFlowLauncher,
+  createFlowStore, classifyFlowRequest, flowSnapshot, observeFlowProgress, mountFlowLauncher as mountProductionFlowLauncher,
   beginFlowEvent, finishFlowEvent, getFlowViewerUrl, openFlowViewer, FLOW_NODES,
   FLOW_RUN_NODES, recordFlowEvent, setFlowSession, endFlowObservation,
 } from '../../src/features/activity-flow/events.js';
 import { api } from '../../src/shared/api/client.js';
 import { flowEventLabel } from '../../src/features/activity-flow/catalog.js';
+
+// DOM/channel tests must not start real asynchronous HTTP work during cleanup.
+function mountFlowLauncher(options = {}) {
+  return mountProductionFlowLauncher({
+    publisherFactory: () => ({ enqueue() {}, flush() {}, dispose() {} }),
+    ...options,
+  });
+}
 
 test('locked result separates waiting for authentication from a successful unlock', () => {
   assert.equal(flowEventLabel({ node: 'report_lock', state: 'waiting' }), '인증 대기');
@@ -554,7 +562,7 @@ test('source transport uses a stable tab key, disconnects, and reconnects after 
   }
 });
 
-test('unsupported or failed channel returns no live link and denied storage stays harmless', () => {
+test('central observation remains available without BroadcastChannel or storage', () => {
   const originals = Object.fromEntries(['document', 'window', 'BroadcastChannel', 'sessionStorage'].map((key) => [key, globalThis[key]]));
   globalThis.document = {};
   globalThis.window = { addEventListener() {}, removeEventListener() {} };
@@ -563,11 +571,11 @@ test('unsupported or failed channel returns no live link and denied storage stay
   try {
     globalThis.BroadcastChannel = undefined;
     dispose = mountFlowLauncher();
-    assert.equal(getFlowViewerUrl(), null);
+    assert.match(getFlowViewerUrl(), /^\/\?view=flow&stream=[a-zA-Z0-9_-]{8,100}$/);
     dispose();
     globalThis.BroadcastChannel = class { constructor() { throw new Error('unsupported'); } };
     dispose = mountFlowLauncher();
-    assert.equal(getFlowViewerUrl(), null);
+    assert.match(getFlowViewerUrl(), /^\/\?view=flow&stream=[a-zA-Z0-9_-]{8,100}$/);
     dispose();
     globalThis.BroadcastChannel = class { addEventListener() {} postMessage() {} close() {} };
     dispose = mountFlowLauncher();
@@ -605,6 +613,9 @@ test('only matching pair subscriptions discover a source and background polling 
     assert.equal(first.sent.at(-1).kind, 'active', 'browser-wide subscriptions cannot read another pair');
     first.message({ data: { kind: 'subscribe', stream: first.sent[0].stream } });
     assert.equal(first.sent.at(-1).kind, 'snapshot');
+    const beforeGlobal = first.sent.length;
+    first.message({ data: { kind: 'subscribe', scope: 'browser' } });
+    assert.equal(first.sent.length, beforeGlobal + 1, 'unpaired local monitor can discover all work tabs');
     const request = beginFlowEvent('api_jobs', { kind: 'request' });
     assert.equal(first.sent.at(-1).active, false);
     finishFlowEvent(request);
@@ -652,24 +663,76 @@ test('ending observation neutralizes unavailable progress without claiming worke
   finishFlowEvent(first, { state: 'cancelled' }); finishFlowEvent(second, { state: 'cancelled' });
 });
 
-test('pair observation never instantiates a server publisher or calls fetch in any session mode', () => {
+test('central publishing sends real metadata and heartbeats but excludes all demo activity', () => {
   const originals = Object.fromEntries(['document', 'window', 'BroadcastChannel', 'sessionStorage'].map((key) => [key, globalThis[key]]));
   const sent = [];
+  let heartbeat, cleared = false;
   globalThis.document = { hidden: false, hasFocus: () => false, addEventListener() {}, removeEventListener() {} };
-  globalThis.window = { fetch() {}, addEventListener() {}, removeEventListener() {}, setInterval: () => 1, clearInterval() {} };
+  globalThis.window = { addEventListener() {}, removeEventListener() {},
+    setInterval(callback, delay) { assert.equal(delay, 20000); heartbeat = callback; return 1; },
+    clearInterval() { cleared = true; } };
   globalThis.BroadcastChannel = class { addEventListener() {} postMessage() {} close() {} };
   globalThis.sessionStorage = { getItem: () => 'source-demo-test', setItem() {} };
   let dispose;
   try {
     setFlowSession('guest');
     dispose = mountFlowLauncher({ publisherFactory: () => ({ enqueue: (value) => sent.push(value), flush() {}, dispose() {} }) });
+    assert.equal(sent[0].kind, 'snapshot');
+    recordFlowEvent('posting', { source: 'observed', resume_text: 'PRIVATE', api_key: 'SECRET' });
+    assert.equal(sent.at(-1).event.node, 'posting');
+    heartbeat();
+    assert.equal(sent.at(-1).kind, 'snapshot');
     setFlowSession('demo');
+    assert.equal(sent.at(-1).kind, 'disconnected');
+    const beforeDemo = sent.length;
     recordFlowEvent('posting', { source: 'demo' });
     recordFlowEvent('notice');
+    heartbeat();
+    assert.equal(sent.length, beforeDemo, 'demo requests and snapshots are never published');
     setFlowSession('guest');
-    assert.equal(sent.length, 0, 'no session sends anything to a central collector');
+    assert.equal(sent.at(-1).kind, 'snapshot');
+    assert.doesNotMatch(JSON.stringify(sent), /PRIVATE|SECRET/);
+    dispose();
+    assert.equal(cleared, true);
   } finally {
     dispose?.();
+    for (const [key, value] of Object.entries(originals)) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
+});
+
+test('demo-only event identities stay out of later real snapshots while older real requests can finish', () => {
+  const originals = Object.fromEntries(['document', 'window', 'BroadcastChannel', 'sessionStorage'].map((key) => [key, globalThis[key]]));
+  globalThis.document = {};
+  globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  globalThis.BroadcastChannel = undefined;
+  globalThis.sessionStorage = { getItem: () => 'demo-history-test', setItem() {} };
+  const sent = [];
+  let dispose;
+  try {
+    setFlowSession('guest');
+    dispose = mountFlowLauncher({ publisherFactory: () => ({ enqueue: (value) => sent.push(value), flush() {}, dispose() {} }) });
+    const realPending = beginFlowEvent('api_jobs', { kind: 'request' });
+    setFlowSession('demo');
+    const demoNotice = recordFlowEvent('notice');
+    const demoPending = beginFlowEvent('api_resume', { kind: 'request' });
+    finishFlowEvent(realPending);
+    setFlowSession('guest');
+    const snapshot = sent.at(-1);
+    assert.equal(snapshot.kind, 'snapshot');
+    for (const rows of [snapshot.events, snapshot.states]) {
+      assert.ok(rows.some((event) => event.id === realPending && event.state === 'complete'));
+      assert.ok(!rows.some((event) => [demoNotice, demoPending].includes(event.id)));
+    }
+    const beforeLateDemo = sent.length;
+    finishFlowEvent(demoPending);
+    assert.equal(sent.length, beforeLateDemo, 'late completion of demo work is still excluded');
+    const realNotice = recordFlowEvent('notice');
+    assert.equal(sent.at(-1).event.id, realNotice, 'the same feature can publish new real activity');
+    assert.ok(flowSnapshot().events.some((event) => event.id === demoNotice), 'application state is unchanged');
+  } finally {
+    dispose?.(); setFlowSession('guest');
     for (const [key, value] of Object.entries(originals)) {
       if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
     }

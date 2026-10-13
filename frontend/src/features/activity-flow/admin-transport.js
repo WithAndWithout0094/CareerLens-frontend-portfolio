@@ -1,11 +1,13 @@
 import { FLOW_NODES, normalizeFlowEvent } from './catalog.js';
 import { stageForFlow } from './backend-progress.js';
+import { cleanFlowEnvelope } from './central-transport.js';
 
 const requestApi = async (...args) => (await import('../../shared/api/client.js')).api(...args);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const terminal = new Set(['completed', 'partial', 'failed', 'cancelled']);
 const state = (value) => value === 'completed' ? 'complete' : ['queued', 'running', 'partial', 'failed', 'cancelled', 'complete'].includes(value) ? value : null;
 const timestamp = (value) => { const result = Date.parse(value); return Number.isFinite(result) ? result : null; };
+const changedEvents = (events, previous) => events.filter((event) => previous?.get(event.id) !== JSON.stringify(event));
 
 /** Only server-recorded stages are mapped; missing criterion details stay absent. */
 export function runEnvelope(run, revision, now = Date.now()) {
@@ -34,7 +36,23 @@ export function runEnvelope(run, revision, now = Date.now()) {
     for (const [node, event] of states) if (node !== 'analysis' && ['running', 'queued'].includes(event.state)) states.delete(node);
   } else if (run.status !== 'queued') states.delete('queue');
   return { kind: 'snapshot', stream: run.run_id, publisher, revision, at: now,
+    activity_at: at, created_at: timestamp(run.created_at) ?? at, active: !terminal.has(run.status), provenance: 'server_recorded',
     connected: run.stale !== true, events: clean, states: [...states.values()], session: { mode: run.source },
+  };
+}
+
+/** Browser reports cannot provide evidence for internal server stages. */
+export function browserEnvelope(value, revision) {
+  if (!value || value.kind !== 'snapshot' || !/^browser:[a-f0-9]{32}$/.test(value.publisher)
+    || !/^[a-zA-Z0-9_-]{8,100}$/.test(value.stream || '') || !Number.isFinite(value.at) || value.at < 0) return null;
+  const observed = (values) => (Array.isArray(values) ? values : [])
+    .filter((event) => !FLOW_NODES.get(event?.node)?.telemetry && !['archive', 'storage_ack'].includes(event?.node))
+    .map((event) => ({ ...event, source: 'observed' }));
+  const clean = cleanFlowEnvelope({ ...value, events: observed(value.events), states: observed(value.states) });
+  if (!clean) return null;
+  return { ...clean, revision, stream: value.stream, publisher: value.publisher,
+    connected: value.connected === true, provenance: 'browser_reported', activity_at: clean.at,
+    active: clean.states.some((event) => ['pending', 'running', 'queued'].includes(event.state)),
   };
 }
 
@@ -44,7 +62,8 @@ export function createAdminFlowMonitor({ request = requestApi, schedule = setTim
   unschedule = clearTimeout, onEnvelope = () => {}, onReset = () => {}, onStatus = () => {}, interval = 1500 } = {}) {
   let paused = true, disposed = false, pending = null, controller = null, revision = 0, failures = 0, generation = 0;
   let status = { state: 'connecting', scope: null, sources: 0, received: 0, gaps: 0, counts: {} };
-  const seen = new Set();
+  const seen = new Map();
+  let catchingUp = true, lastSnapshotAt = 0;
   const emit = (change) => { status = { ...status, ...change }; onStatus({ ...status }); };
   function plan(delay = interval) {
     if (!disposed && !paused && pending === null && !controller) pending = schedule(() => { pending = null; void poll(); }, delay);
@@ -59,23 +78,34 @@ export function createAdminFlowMonitor({ request = requestApi, schedule = setTim
       if (!Array.isArray(payload?.runs)) throw new Error('Invalid activity snapshot');
       revision++;
       const present = new Set();
-      for (const run of payload.runs.slice(0, 500)) {
-        const envelope = runEnvelope(run, revision);
-        if (!envelope) continue;
-        present.add(envelope.publisher); seen.add(envelope.publisher);
-        onEnvelope(envelope, { snapshot: true });
+      const runs = payload.runs.slice(0, 500).map((run) => runEnvelope(run, revision)).filter(Boolean);
+      const browsers = (Array.isArray(payload.browser_sources) ? payload.browser_sources : []).slice(0, 500)
+        .map((source) => browserEnvelope(source, revision)).filter(Boolean);
+      for (const envelope of [...runs, ...browsers]) {
+        const previous = seen.get(envelope.publisher);
+        const liveEvents = !catchingUp && (previous || envelope.activity_at >= lastSnapshotAt)
+          ? changedEvents(envelope.events, previous?.events) : [];
+        present.add(envelope.publisher);
+        seen.set(envelope.publisher, { stream: envelope.stream, events: new Map(envelope.events.map((event) => [event.id, JSON.stringify(event)])) });
+        onEnvelope(envelope, { snapshot: catchingUp, bootstrap: catchingUp, liveEvents });
       }
-      for (const publisher of seen) if (!present.has(publisher)) {
-        onEnvelope({ kind: 'disconnected', stream: publisher.split(':')[1], publisher, revision, at: Date.now() }, { snapshot: true });
+      for (const [publisher, previous] of seen) if (!present.has(publisher)) {
+        onEnvelope({ kind: 'disconnected', stream: previous.stream, publisher, revision, at: Date.now() }, { snapshot: true });
         seen.delete(publisher);
       }
       failures = 0;
+      catchingUp = false;
+      lastSnapshotAt = timestamp(payload.generated_at) ?? Date.now();
       emit({ state: 'connected', scope: payload.redis?.connected === true ? 'shared' : 'database',
-        sources: present.size, counts: payload.counts || {}, redis: payload.redis || {}, generated_at: payload.generated_at });
+        sources: present.size, runSources: runs.length, browserSources: browsers.length,
+        browserConnected: browsers.filter((source) => source.connected).length,
+        counts: payload.counts || {}, redis: payload.redis || {},
+        browserStatus: { available: payload.browser_status?.available === true, connected: payload.browser_status?.connected === true },
+        generated_at: payload.generated_at });
     } catch (error) {
       if (disposed || paused || currentGeneration !== generation) return;
       if ([401, 403].includes(error?.status)) { paused = true; emit({ state: 'unauthorized' }); }
-      else { failures++; emit({ state: 'retrying' }); }
+      else { failures++; catchingUp = true; emit({ state: 'retrying' }); }
     } finally {
       unschedule(deadline);
       if (controller === current) controller = null;
@@ -84,7 +114,7 @@ export function createAdminFlowMonitor({ request = requestApi, schedule = setTim
   }
   return {
     start() { if (!disposed) { paused = false; plan(0); } },
-    pause() { paused = true; generation++; if (pending !== null) unschedule(pending); pending = null; controller?.abort(); },
+    pause() { paused = true; catchingUp = true; generation++; if (pending !== null) unschedule(pending); pending = null; controller?.abort(); },
     restart() { this.pause(); controller = null; seen.clear(); onReset(); this.start(); },
     poll, status: () => ({ ...status }),
     dispose() { this.pause(); disposed = true; },

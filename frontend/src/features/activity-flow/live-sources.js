@@ -25,11 +25,17 @@ export function createLiveFlowSources({ initialStream = null, now = Date.now, li
       relatedPublisher: source.relatedPublisher,
       dropped: source.dropped || 0,
       updatedAt: source.updatedAt,
+      activityAt: source.activityAt, provenance: source.provenance,
       events: source.events.map((event) => ({ ...event })),
       states: [...source.states.values()].map((event) => ({ ...event })),
       session: source.mode ? { mode: source.mode } : {},
       connectedAt: source.connectedAt, connected: source.connected,
     };
+  }
+
+  function preferredSource() {
+    return [...sources.values()].filter((source) => source.provenance && source.connected)
+      .sort((a, b) => Number(b.active) - Number(a.active) || b.activityAt - a.activityAt || b.createdAt - a.createdAt || a.created - b.created)[0];
   }
 
   function updateEvent(source, value) {
@@ -63,7 +69,7 @@ export function createLiveFlowSources({ initialStream = null, now = Date.now, li
     return event;
   }
 
-  function receive(data) {
+  function receive(data, { bootstrap = false } = {}) {
     if (!data || !validKey(data.stream) || !['snapshot', 'event', 'active', 'disconnected'].includes(data.kind)) return null;
     if (data.publisher !== undefined && !validKey(data.publisher)) return null;
     if (data.revision !== undefined && (!Number.isSafeInteger(data.revision) || data.revision < 0)) return null;
@@ -135,6 +141,30 @@ export function createLiveFlowSources({ initialStream = null, now = Date.now, li
     if (central && key.startsWith('worker:')) source.mode = 'member';
     if (central && key.startsWith('guest:')) source.mode = 'guest';
 
+    if (central && ['server_recorded', 'browser_reported'].includes(data.provenance)) {
+      source.provenance = data.provenance;
+      source.active = data.active === true && source.connected;
+      source.createdAt = Number.isFinite(data.created_at) ? data.created_at : 0;
+      const changed = historyUpdates.length > 0;
+      // A browser heartbeat changes last-seen time, not real user activity.
+      const meaningful = source.provenance === 'server_recorded' || historyUpdates.some((event) => ['action', 'navigation', 'session'].includes(event.kind));
+      if (source.activityAt === undefined || changed && meaningful)
+        source.activityAt = Number.isFinite(data.activity_at) ? Math.min(data.activity_at, now()) : source.updatedAt;
+      if (selection === 'auto') {
+        if (bootstrap) {
+          const preferred = preferredSource();
+          if (preferred) { selected = preferred.key; lastActivityAt = preferred.activityAt; }
+        } else if (changed && meaningful && source.connected && source.activityAt >= lastActivityAt) {
+          selected = key;
+          lastActivityAt = source.activityAt;
+        }
+      }
+    }
+    if (selection === 'auto' && selected === key && !source.connected && source.provenance) {
+      const preferred = preferredSource();
+      if (preferred) { selected = preferred.key; lastActivityAt = preferred.activityAt; }
+    }
+
     const pinned = selection !== 'auto' ? sources.get(selection) : null;
     if (data.kind === 'snapshot' && pinned && !pinned.connected && pinned.stream === source.stream
       && pinned.replacementAfter !== null && source.created > pinned.replacementAfter
@@ -171,12 +201,16 @@ export function createLiveFlowSources({ initialStream = null, now = Date.now, li
     evicted: () => evicted,
     dropped: () => [...sources.values()].reduce((total, source) => total + (source.dropped || 0), 0),
     snapshot: () => view(sources.get(selected)),
-    options: () => [...sources.values()].map(({ key, label, mode, connectedAt, connected, relatedPublisher, updatedAt }) => ({ key, label, mode, connectedAt, connected, relatedPublisher, updatedAt })),
+    options: () => [...sources.values()].map(({ key, label, mode, connectedAt, connected, relatedPublisher, updatedAt, activityAt, provenance }) => ({ key, label, mode, connectedAt, connected, relatedPublisher, updatedAt, activityAt, provenance })),
     selection: () => selection,
     select(key) {
       if (key !== 'auto' && !sources.has(key)) return null;
       selection = key;
       if (key !== 'auto') selected = key;
+      else if (central) {
+        const preferred = preferredSource();
+        if (preferred) { selected = preferred.key; lastActivityAt = preferred.activityAt; }
+      }
       // Auto resumes with the current tab, then follows the next real activity.
       return view(sources.get(selected));
     },

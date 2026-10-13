@@ -103,7 +103,7 @@ test('live dependencies follow sequential parsing, four parallel domains, then s
   assert.deepEqual(['a', 'b', 'c', 'd'].map((domain) => FLOW_NODES.get(`domain_${domain}`).label), ['이력서 완성도', '직무 적합도', '지원 자격 충족도', '실무 경쟁력']);
 });
 
-async function viewerFixture({ central = false, paired = false, request } = {}) {
+async function viewerFixture({ central = false, paired = false, request, search = '?view=flow&stream=test-stream' } = {}) {
   const source = await readFile(new URL('../../src/features/activity-flow/viewer.js', import.meta.url), 'utf8');
   class Element {
     constructor(dataset = {}) {
@@ -139,6 +139,7 @@ async function viewerFixture({ central = false, paired = false, request } = {}) 
   const active = [];
   const edges = [];
   const intervals = [];
+  const posted = [];
   let clockNow = 1_000_000;
   let resets = 0;
   let nextFrame = 0;
@@ -160,7 +161,7 @@ async function viewerFixture({ central = false, paired = false, request } = {}) 
       return { start() {}, pause() {}, restart() { hooks.onReset(); }, dispose() { centralDisposed = true; } };
     },
     Date: class extends Date { static now() { return clockNow; } },
-    location: { search: '?view=flow&stream=test-stream' },
+    location: { search },
     localStorage: { getItem() { return null; } },
     matchMedia: () => ({ matches: false }),
     performance: { now: () => 1000 },
@@ -178,7 +179,7 @@ async function viewerFixture({ central = false, paired = false, request } = {}) 
     },
     BroadcastChannel: class {
       addEventListener(_name, handler) { message = handler; }
-      postMessage() {}
+      postMessage(value) { posted.push(value); }
       close() {}
     },
     mountFlowMotion: () => ({
@@ -188,7 +189,7 @@ async function viewerFixture({ central = false, paired = false, request } = {}) 
   vm.runInContext(source.replace(/^import .*;\r?$/gm, '').replace('export function mountFlowViewer', 'function mountFlowViewer'), context);
   const dispose = context.mountFlowViewer(host, { central, paired, request, onUnauthorized: () => unauthorized++ });
   return {
-    host, cards, frames, timeouts, pulses, active, edges, document, dispose,
+    host, cards, frames, timeouts, pulses, active, edges, document, dispose, posted,
     remote: (data, metadata = {}) => centralHooks.onEnvelope(data, metadata),
     connection: (value) => centralHooks.onStatus({ state: 'connected', scope: 'shared', sources: 2, received: 0, gaps: 0, ...value }),
     remoteDisposed: () => centralDisposed,
@@ -290,6 +291,74 @@ test('central monitor keeps every source visible in aggregate while pinning one 
   assert.notEqual(ui.cards.get('api_resume').dataset.state, 'pending', 'other source cannot contaminate pinned map');
   assert.equal(ui.cards.size, 29);
   ui.dispose();
+});
+
+test('direct monitoring without a paired stream subscribes to and renders this browser’s real events', async () => {
+  const ui = await viewerFixture({ central: true, paired: true, search: '?view=flow' });
+  try {
+    ui.mode('local');
+    assert.equal(ui.posted.at(-1).scope, 'browser');
+    ui.message({ kind: 'snapshot', stream: 'real-browser-stream', publisher: 'real-publisher',
+      events: [requestEvent('request-real', 'complete', 1000000, 42)], states: [requestEvent('request-real', 'complete', 1000000, 42)], session: { mode: 'member' } });
+    ui.frame();
+    assert.equal(ui.cards.get('api_jobs').dataset.state, 'complete');
+    assert.equal(ui.element('[data-flow-request-count]').textContent, '1개 요청');
+    assert.equal(ui.element('[data-flow-source-label]').hidden, false);
+  } finally { ui.dispose(); }
+});
+
+test('continuous server polling flashes only new steps and preserves them briefly across unchanged heartbeats', async () => {
+  const ui = await viewerFixture({ central: true });
+  const source = { kind: 'snapshot', stream: 'worker-a-1234', publisher: 'worker:worker-a-1234',
+    provenance: 'server_recorded', connected: true, at: 1000000, session: { mode: 'member' } };
+  const initial = { ...event, id: 'parsed', node: 'parse_resume', state: 'running', at: 999000 };
+  const completed = { ...initial, state: 'complete', at: 1000000 };
+  try {
+    ui.remote({ ...source, revision: 1, events: [initial], states: [initial] }, { snapshot: true, bootstrap: true, liveEvents: [] });
+    ui.connection(); ui.frame();
+    assert.equal(ui.pulses.length, 0);
+    ui.remote({ ...source, revision: 2, events: [completed], states: [completed] }, { snapshot: false, liveEvents: [completed] });
+    ui.frame();
+    assert.equal(ui.cards.get('parse_resume').dataset.activity, 'complete');
+    assert.equal(ui.pulses.length, 1);
+    ui.elapse(500);
+    ui.remote({ ...source, revision: 3, events: [completed], states: [completed] }, { snapshot: false, liveEvents: [] });
+    ui.frame();
+    assert.equal(ui.pulses.length, 1, 'an unchanged heartbeat cannot replay completion');
+    assert.equal(ui.cards.get('parse_resume').dataset.activity, 'complete');
+    ui.elapse(1200);
+    assert.equal(ui.cards.get('parse_resume').dataset.activity, 'idle');
+    ui.remote({ ...source, revision: 4, events: [completed], states: [completed] }, { snapshot: true, bootstrap: true, liveEvents: [] });
+    ui.frame();
+    assert.equal(ui.pulses.length, 1, 'reconnection cannot animate historical steps');
+    assert.equal(ui.cards.get('parse_resume').dataset.activity, 'idle');
+  } finally { ui.dispose(); }
+});
+
+test('a new server analysis replaces the old failed automatic map while browser provenance stays explicit', async () => {
+  const ui = await viewerFixture({ central: true });
+  const failed = { ...event, at: 100, state: 'failed' };
+  const running = { ...event, at: 200, progress: 45 };
+  const source = { kind: 'snapshot', provenance: 'server_recorded', at: 1000000, revision: 1, connected: true, session: { mode: 'member' } };
+  try {
+    ui.remote({ ...source, stream: 'old-run-stream', publisher: 'worker:old-run-stream', activity_at: 100, active: false,
+      events: [failed], states: [failed] }, { snapshot: true, bootstrap: true });
+    ui.connection(); ui.frame();
+    assert.equal(ui.cards.get('analysis').dataset.state, 'failed');
+    ui.remote({ ...source, stream: 'new-run-stream', publisher: 'worker:new-run-stream', activity_at: 200, active: true,
+      events: [running], states: [running] }, { snapshot: false, liveEvents: [running] });
+    ui.frame();
+    assert.equal(ui.cards.get('analysis').dataset.state, 'running');
+    assert.match(ui.element('[data-flow-related]').innerHTML, /서버 실행 기록/);
+    const browserRequest = requestEvent('measured-request', 'complete', 300, 82);
+    ui.remote({ ...source, stream: 'browser-stream', publisher: 'browser:' + 'a'.repeat(32),
+      provenance: 'browser_reported', activity_at: 300, events: [browserRequest], states: [browserRequest] }, { snapshot: true, bootstrap: true });
+    ui.source('browser:' + 'a'.repeat(32)); ui.frame(); ui.select('api_jobs');
+    assert.match(ui.element('[data-flow-detail]').innerHTML, /브라우저 보고 · 서버 검증값 아님/);
+    assert.match(ui.element('[data-flow-chart-note]').textContent, /브라우저가 측정/);
+    assert.equal(ui.element('[data-flow-request-count]').textContent, '1개 요청');
+    assert.notEqual(ui.cards.get('analysis').dataset.state, 'running', 'browser and server ledgers never merge');
+  } finally { ui.dispose(); }
 });
 
 test('central source association links browser to trusted server analysis without merging ledgers', async () => {

@@ -1,5 +1,6 @@
 // Browser-observed metadata only. Never pass application payloads into this store.
 import { BACKEND_FLOW_NODES, GUEST_FLOW_NODES, stageForFlow } from './backend-progress.js';
+import { createFlowPublisher } from './central-transport.js';
 export const FLOW_NODES = Object.freeze([
   'visit', 'auth', 'resume', 'role', 'posting', 'api_auth', 'api_resume',
   'api_jobs', 'api_evaluation', 'api_report', 'queue', 'analysis', 'report',
@@ -282,7 +283,7 @@ export function openFlowViewer() {
   return child;
 }
 
-export function mountFlowLauncher() {
+export function mountFlowLauncher({ publisherFactory = createFlowPublisher } = {}) {
   if (launcherDisposer) return launcherDisposer;
   if (typeof document === 'undefined' || typeof window === 'undefined') return () => {};
   const stream = tabStream();
@@ -291,12 +292,39 @@ export function mountFlowLauncher() {
   // keeps those tabs' event-1 IDs and analysis states separate nonetheless.
   const publisher = randomStream();
   sourcePublisher = publisher;
+  const central = publisherFactory({ stream, publisher });
   let revision = 0;
   let channel;
+  let heartbeat;
+  let demo = store.snapshot().session.mode === 'demo';
+  let beforeDemo = new Set();
+  const demoEventIds = new Set();
   function send(message) {
     const envelope = { ...message, ...(publisher ? { publisher } : {}), revision: ++revision };
     try { channel?.postMessage(envelope); }
     catch { /* A closed observer is harmless. */ }
+    // The server revalidates this allowlisted metadata; no product payload is sent.
+    const current = store.snapshot();
+    const isDemo = current.session.mode === 'demo';
+    const retainedIds = new Set([...current.events, ...current.states].map((event) => event.id));
+    if (isDemo && !demo) beforeDemo = new Set(retainedIds);
+    // Some callers use the default observed source even during a demo. Remember
+    // those IDs through later snapshots without changing the application store.
+    // Requests that began before the demo retain their original identity.
+    if (isDemo || demo)
+      for (const id of retainedIds) if (!beforeDemo.has(id)) demoEventIds.add(id);
+    for (const id of demoEventIds) if (!retainedIds.has(id)) demoEventIds.delete(id);
+    if (!isDemo) {
+      beforeDemo.clear();
+      if (envelope.kind === 'snapshot') central.enqueue({
+        ...envelope,
+        events: envelope.events.filter((event) => !demoEventIds.has(event.id)),
+        states: envelope.states.filter((event) => !demoEventIds.has(event.id)),
+      });
+      else if (envelope.kind !== 'event' || !demoEventIds.has(envelope.event.id)) central.enqueue(envelope);
+    }
+    else if (!demo) central.enqueue({ kind: 'disconnected', revision, at: Date.now() });
+    demo = isDemo;
   }
   const foreground = () => !document.hidden && document.visibilityState !== 'hidden' && document.hasFocus?.() === true;
   function announceActivity() {
@@ -308,14 +336,18 @@ export function mountFlowLauncher() {
     try {
       channel = new BroadcastChannel(FLOW_CHANNEL);
       channel.addEventListener('message', ({ data }) => {
-        if (data?.kind === 'subscribe' && data.stream === stream) snapshot();
+        if (data?.kind === 'subscribe' && (data.stream === stream || (!data.stream && data.scope === 'browser'))) snapshot();
       });
     } catch { channel = undefined; }
     snapshot();
     announceActivity();
+    if (heartbeat === undefined) heartbeat = window.setInterval?.(snapshot, 20000);
   }
   function disconnect() {
     send({ kind: 'disconnected', stream });
+    void central.flush({ keepalive: true });
+    if (heartbeat !== undefined) window.clearInterval?.(heartbeat);
+    heartbeat = undefined;
     channel?.close(); channel = undefined;
   }
   const unsubscribe = store.subscribe((change) => {
@@ -335,9 +367,9 @@ export function mountFlowLauncher() {
   };
   document.addEventListener?.('click', launch);
   connect();
-  sourceStream = channel ? stream : null;
+  sourceStream = stream;
   launcherDisposer = () => {
-    disconnect(); unsubscribe(); sourceStream = null; sourcePublisher = null;
+    disconnect(); central.dispose(); unsubscribe(); sourceStream = null; sourcePublisher = null;
     window.removeEventListener('pagehide', disconnect);
     window.removeEventListener('pageshow', resume);
     window.removeEventListener('focus', announceActivity);

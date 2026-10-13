@@ -157,6 +157,8 @@ class RealtimeMonitor:
                                                socket_timeout=.3, max_connections=16)
             except ImportError:
                 pass
+        from app.infrastructure.browser_flow import BrowserFlowStore
+        self.browser_flow = BrowserFlowStore(self._client, configured=self.configured)
 
     def reserve_analysis(self, scope, limit, window_seconds, idempotency_key=None):
         """Reserve paid work, atomically and fail closed on configured Redis failure.
@@ -346,10 +348,12 @@ class RealtimeMonitor:
                     changed = changed.replace(tzinfo=timezone.utc)
                 row['stale'] = (now - changed).total_seconds() > 180
         counts = Counter(row['status'] for row in rows)
+        browser_sources, browser_status = await asyncio.to_thread(self.browser_flow.snapshot)
         return {'generated_at': now.isoformat(), 'transport': 'redis' if connected else 'postgres',
                 'redis': {'configured': self.configured, 'connected': connected},
                 'counts': {status: counts[status] for status in sorted(STATUSES)},
-                'window': 'latest_100_and_active', 'runs': rows}
+                'window': 'latest_100_and_active', 'runs': rows,
+                'browser_sources': browser_sources, 'browser_status': browser_status}
 
     async def close(self):
         if self._client is not None:

@@ -1576,7 +1576,7 @@ export async function backendApi(path, options, request, ApiError) {
   if (!['GET', 'HEAD'].includes(method) && !/^\/(?:auth|guest|flow)(?:\/|$)/.test(cleanPath))
     request = ownerBoundRequest(request).request;
   if (/^\/flow(?:\/|$)/.test(cleanPath))
-    return request(path, { method, body, signal, keepalive: options.keepalive });
+    return request(path, { method, body, signal, auth: false, keepalive: options.keepalive });
   // Public portfolio views expose sanitized operational metadata only. Do not
   // send a member token: an expired session must not break the public demo.
   if (method === 'GET' && /^\/admin\/(?:activity-flow|(?:evaluation-performance|execution-reports)(?:\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?)$/i.test(cleanPath))

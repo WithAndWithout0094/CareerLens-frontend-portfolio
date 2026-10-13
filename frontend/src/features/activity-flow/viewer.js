@@ -91,8 +91,9 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
   document.body.dataset.flowTheme = theme;
   const requestedStream = new URLSearchParams(location.search).get('stream');
   const stream = /^[a-zA-Z0-9_-]{8,100}$/.test(requestedStream || '') ? requestedStream : null;
+  const pairedStream = paired && Boolean(stream);
   let transportMode = central ? 'central' : 'local';
-  const makeSources = () => createLiveFlowSources({ initialStream: stream, now: () => Date.now(), central: transportMode === 'central', paired: paired && transportMode === 'local', limit: transportMode === 'central' ? 5000 : 16 });
+  const makeSources = () => createLiveFlowSources({ initialStream: stream, now: () => Date.now(), central: transportMode === 'central', paired: pairedStream && transportMode === 'local', limit: transportMode === 'central' ? 5000 : 16 });
   let liveSources = makeSources();
   host.innerHTML = pageMarkup(Boolean(stream), central);
   const $ = (selector) => host.querySelector(selector);
@@ -276,7 +277,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
     $('[data-flow-chart-note]').textContent = demo ? '시연용 예시 요청 시간 · 실제 요청 없음' : '실제 네트워크 요청 왕복만 · 최근 16개 · 분석 전체 시간과 다릅니다';
     $('[data-flow-map-hint]').textContent = demo ? '좁은 화면에서는 진행 단계로 지도가 이동합니다' : '단계를 선택해 상세 보기 · 좌우로 스크롤';
     $('[data-flow-global]').hidden = !shared;
-    if (paired && !shared && !demo) {
+    if (pairedStream && !shared && !demo) {
       $('[data-flow-source-label]').hidden = true;
       $('[data-flow-connection]').textContent = fresh ? '원래 작업 창 연결됨' : '원래 작업 창 연결 대기';
       $('[data-flow-scope]').textContent = '이 관찰 창을 연 작업 창 하나만 표시합니다';
@@ -290,22 +291,30 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
       $('[data-flow-connection]').textContent = centralState.state === 'connected' ? sharedScope ? 'Redis 실시간 연결됨' : '데이터베이스 연결됨' : '수집 서버 재연결 대기';
       $('[data-flow-scope]').textContent = `${source?.label || '대상 선택 대기'} · 아래 지도는 선택한 대상 한 개${source && Date.now() - source.updatedAt >= 120000 ? ' · 최근 이벤트 없음, 마지막 기록 표시' : ''}`;
       $('[data-flow-banner]').textContent = centralState.state === 'connected'
-        ? sharedScope ? '여러 사용자 동시 관찰 · Redis와 데이터베이스에 기록된 회원·비회원 분석을 조회합니다. 특정 분석을 선택해도 전체 상태는 계속 갱신됩니다.'
+        ? sharedScope ? '여러 사용자 동시 관찰 · 브라우저가 보고한 화면 동작과 서버가 기록한 분석을 각각 조회합니다. 브라우저 기록은 서버 검증값이 아니며, 특정 대상을 선택해도 전체 상태는 계속 갱신됩니다.'
           : 'Redis 연결을 사용할 수 없어 데이터베이스에 보관된 회원 분석 상태를 조회합니다. 비회원 실시간 기록은 Redis 연결이 복구되면 다시 표시합니다.'
         : centralState.state === 'resyncing' ? '보관 기간 또는 수집 범위를 벗어난 기록이 있어 현재 상태를 다시 불러옵니다. 누락된 이력은 복구된 것으로 표시하지 않습니다.'
           : '전체 이용 수집 서버에 연결하는 중입니다. 연결되지 않은 동안 전체 요청이 관측되는 것으로 표시하지 않습니다. 브라우저만 관찰하려면 관찰 모드를 변경하세요.';
       const loss = centralState.gaps || liveSources.evicted() || liveSources.dropped();
-      $('[data-flow-global-health]').textContent = `${loss ? `기록 공백 ${centralState.gaps}회 · 범위 밖 대상 ${liveSources.evicted()}개 · ` : ''}${centralState.state === 'connected' ? '약 1.5초 간격 갱신' : '재연결 중'}`;
+      const fetchedAt = Date.parse(centralState.generated_at);
+      $('[data-flow-global-health]').textContent = `${loss ? `기록 공백 ${centralState.gaps}회 · 범위 밖 대상 ${liveSources.evicted()}개 · ` : ''}${centralState.state === 'connected' ? `약 1.5초 간격 갱신${Number.isFinite(fetchedAt) ? ` · 최근 수신 ${time(fetchedAt)}` : ''}` : '재연결 중'}`;
       const counts = centralState.counts || {};
-      $('[data-flow-global-summary]').textContent = `관찰 표본 ${centralState.sources}건 · 대기 ${counts.queued ?? '미수집'} · 실행 중 ${counts.running ?? '미수집'} · 완료 ${counts.completed ?? '미수집'} · 부분 완료 ${counts.partial ?? '미수집'} · 실패 ${counts.failed ?? '미수집'} · 취소 ${counts.cancelled ?? '미수집'}`;
+      $('[data-flow-global-summary]').textContent = `브라우저 ${centralState.browserSources ?? 0}개 (연결 ${centralState.browserConnected ?? 0}) · 분석 ${centralState.runSources ?? centralState.sources}건 · 대기 ${counts.queued ?? '미수집'} · 실행 중 ${counts.running ?? '미수집'} · 완료 ${counts.completed ?? '미수집'} · 부분 완료 ${counts.partial ?? '미수집'} · 실패 ${counts.failed ?? '미수집'} · 취소 ${counts.cancelled ?? '미수집'}`;
       $('[data-flow-source-page]').textContent = `지도 대상 목록 ${sourcePage + 1} / ${Math.max(1, Math.ceil(tabs.length / 100))} · 페이지당 100개 · 서버 조회 표본 범위`;
       $('[data-flow-source-prev]').disabled = sourcePage === 0;
       $('[data-flow-source-next]').disabled = (sourcePage + 1) * 100 >= tabs.length;
       const labels = new Map(tabs.map((tab) => [tab.key, tab.label]));
       const linked = source ? tabs.filter((tab) => tab.relatedPublisher === source.key || tab.key === source.relatedPublisher) : [];
-      $('[data-flow-related]').innerHTML = linked.length ? '<span>선택한 대상과 연결된 기록</span>' + linked.slice(-20).map((tab) => `<button type="button" data-flow-pick="${esc(tab.key)}">${esc(tab.label)} 보기</button>`).join('') : '<span>선택한 대상과 연결된 분석 기록이 아직 없습니다.</span>';
+      $('[data-flow-related]').innerHTML = linked.length ? '<span>선택한 대상과 연결된 기록</span>' + linked.slice(-20).map((tab) => `<button type="button" data-flow-pick="${esc(tab.key)}">${esc(tab.label)} 보기</button>`).join('')
+        : source?.key.startsWith('browser:') ? '<span>브라우저가 보고한 화면·API 동작입니다. 서버 내부 분석은 회원·비회원 분석 대상을 선택해 확인하세요.</span>'
+          : source ? '<span>선택한 분석의 서버 실행 기록을 아래 지도에 표시합니다. 브라우저 동작은 별도 대상으로 구분합니다.</span>'
+            : '<span>앱을 사용하거나 분석을 시작하면 관찰 대상이 표시됩니다.</span>';
       $('[data-flow-global-feed]').innerHTML = allEvents.length ? [...allEvents].reverse().map(({ key, event, receivedAt }) => `<button type="button" class="flow-global-row" data-flow-pick="${esc(key)}"><time>${time(receivedAt)}</time><span>${esc(labels.get(key) || '보관 범위 밖 대상')}</span><span>${esc(FLOW_NODES.get(event.node)?.label || event.node)}</span><span>${esc(flowEventLabel(event))}</span><span>${key.startsWith('browser:') ? '브라우저 관측' : '서버 기록'}</span></button>`).join('') : '<p class="flow-empty-log">수집된 이벤트가 없습니다. 새 이벤트가 들어오면 모든 대상의 기록이 여기에 표시됩니다.</p>';
       $('[data-flow-log-note]').textContent = '선택한 대상의 최근 100개 이벤트 · 전체 이용 기록은 위 목록';
+      if (source?.key.startsWith('browser:')) {
+        $('[data-flow-log-note]').textContent += ' · 브라우저 보고값이며 서버 내부 실행 증거가 아닙니다';
+        $('[data-flow-chart-note]').textContent = '브라우저가 측정·보고한 요청 왕복 시간 · 서버 검증값 아님';
+      }
     }
   }
 
@@ -320,7 +329,9 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
       result_delivery: '인증 성공을 확인한 시점부터 완성된 보고서를 화면에 표시할 때까지 잽니다. 목표는 3초 이내이며, 측정 전에는 달성 여부를 알 수 없습니다. 실패 시간은 표시 완료 시간이 아닙니다.',
       guest_cleanup: '취소·만료·삭제의 확인 상태입니다. 비회원 임시 보관은 첫 첨부 기준 최대 30분입니다. 다른 계정의 보고서를 삭제한 뜻은 아닙니다.',
     };
-    const source = event ? event.source === 'backend' && event.execution === 'guest' ? '프론트 서버 응답 · 비회원 분석' : FLOW_SOURCES[event.source] : '기록 없음';
+    const source = event ? transportMode === 'central' && liveSources.snapshot()?.provenance === 'browser_reported'
+      ? '브라우저 보고 · 서버 검증값 아님'
+      : event.source === 'backend' && event.execution === 'guest' ? '프론트 서버 응답 · 비회원 분석' : FLOW_SOURCES[event.source] : '기록 없음';
     const timeLabel = event?.node === 'result_delivery' ? '인증 후 표시 시간' : chosen === 'analysis' ? '서버 분석 시간' : event?.kind === 'request' ? '요청 왕복 시간' : '측정 시간';
     $('[data-flow-detail]').innerHTML = `<h3>${definition.label}</h3><p>${description(chosen)}</p><dl><div><dt>최근 세부 단계</dt><dd>${event ? FLOW_NODES.get(event.node).label : '기록 없음'}</dd></div><div><dt>정보 출처</dt><dd>${source}</dd></div><div><dt>최근 이벤트</dt><dd>${event ? time(event.at) : '—'}</dd></div>${event?.method ? `<div><dt>요청 방식</dt><dd>${event.method}</dd></div>` : ''}${event?.criterion ? `<div><dt>최근 평가 항목</dt><dd>${event.criterion}</dd></div>` : ''}<div><dt>${timeLabel}</dt><dd>${event ? duration(event.durationMs) : '미측정'}</dd></div><div><dt>전체 분석 진행률</dt><dd>${event?.progress !== null && event?.progress !== undefined ? `${Math.round(event.progress)}%` : '미제공'}</dd></div></dl><p class="flow-detail-note">${mode === 'demo' ? '가상 시연의 예시 상태·시간입니다. 실제 인증·분석·데이터 저장은 실행하지 않습니다.' : guestNotes[event?.node] || (definition.telemetry ? (chosen.startsWith('domain_') ? '표시된 항목의 최근 상태입니다. 항목 하나의 완료는 영역 전체 완료를 뜻하지 않습니다.' : '서버가 보낸 진행 이벤트와 전체 실행 상태를 표시합니다. 이벤트가 없으면 이전 단계의 완료로 추정하지 않습니다.') : definition.internal ? '이 단계의 개별 이벤트는 제공되지 않습니다. 앞 단계의 완료로 실행을 추정하지 않습니다.' : chosen === 'storage_ack' ? '회원가입·이력서 저장 API의 성공 응답을 확인한 상태입니다. DB 내부 처리 시간은 제공되지 않습니다.' : event?.kind === 'request' ? '네트워크와 서버 응답을 포함한 왕복 시간입니다. 서버 내부 계산 시간과 다를 수 있습니다.' : '이름·이메일·입력 본문을 포함하지 않는 단계 상태입니다.')}</p>`;
     if (definition.members.length > 1) {
@@ -481,7 +492,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
   }
 
   function subscribe() {
-    if (mode === 'live' && transportMode === 'local') channel?.postMessage({ kind: 'subscribe', stream, ...(paired ? {} : { scope: 'browser' }) });
+    if (mode === 'live' && transportMode === 'local') channel?.postMessage({ kind: 'subscribe', stream, ...(pairedStream ? {} : { scope: 'browser' }) });
   }
 
   function renderDemo() {
@@ -582,9 +593,9 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
     }
   }
 
-  function applyLiveSnapshot(snapshot) {
+  function applyLiveSnapshot(snapshot, { preserveActivity = false } = {}) {
     livePulses.clear();
-    clearCardFlashes();
+    if (!preserveActivity) clearCardFlashes();
     events = [];
     nodeStates.clear();
     for (const value of snapshot?.events || []) accept(value, false);
@@ -595,9 +606,9 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
     connectedAt = snapshot?.connected ? snapshot.connectedAt : 0;
   }
 
-  function receive(data, { snapshot = false } = {}) {
+  function receive(data, { snapshot = false, bootstrap = false, liveEvents = [] } = {}) {
       if (disposed || mode !== 'live') return;
-      const change = liveSources.receive(data);
+      const change = liveSources.receive(data, { bootstrap });
       if (!change) return;
       if (pendingPin && change.key === pendingPin) {
         change.snapshot = liveSources.select(pendingPin);
@@ -625,7 +636,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
       if (change.selectedUpdated) {
         if (change.selectedChanged || change.kind === 'snapshot') {
           if (change.selectedChanged) motion.reset();
-          applyLiveSnapshot(change.snapshot);
+          applyLiveSnapshot(change.snapshot, { preserveActivity: transportMode === 'central' && Boolean(data.provenance) && !snapshot && !change.selectedChanged });
           // Selecting another document restores its own history without replay.
           // Only the actual incoming event may flash once on that new document.
           if (change.event && !snapshot && !document.hidden) {
@@ -634,6 +645,17 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
             if (!ACTIVE_STATES.has(change.event.state)) cardFlashes.set(node, { state: change.event.state, until: Date.now() + CARD_FLASH_MS });
           }
         } else if (change.event) accept(change.event, !snapshot);
+        // A continuous poll can contain new steps as well as old history. Only
+        // the changed, still-current steps may flash; bootstrap/reconnect cannot.
+        if (!snapshot && !document.hidden && change.snapshot?.key === change.key) {
+          for (const value of liveEvents) {
+            const event = normalizeFlowEvent(value), current = event && nodeStates.get(event.node);
+            if (!event || current?.id !== event.id || current.state !== event.state) continue;
+            const node = projectFlowNode(event.node);
+            livePulses.set(node, event);
+            if (!ACTIVE_STATES.has(event.state)) cardFlashes.set(node, { state: event.state, until: Date.now() + CARD_FLASH_MS });
+          }
+        }
         connectedAt = change.snapshot?.connected ? change.snapshot.connectedAt : 0;
         if (!connectedAt) stopLiveMotion();
       }
@@ -705,7 +727,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
   }
   function onMode(event) { switchMode(event.target.value === 'local' && central ? 'local' : event.target.value === 'live' && (central || stream) ? 'live' : 'demo'); }
   function onSource(event) {
-    if (mode !== 'live' || paired && transportMode === 'local') return;
+    if (mode !== 'live' || pairedStream && transportMode === 'local') return;
     const snapshot = liveSources.select(event.target.value);
     if (!snapshot) return;
     motion.reset();

@@ -248,7 +248,7 @@ test('a failed old refresh cannot log out a replacement account', async () => {
   });
 });
 
-test('central flow requests preserve optional member bearer tokens', async () => {
+test('public metadata collection never transmits member bearer tokens', async () => {
   const calls = [];
   await withFetch(async (url, options) => {
     calls.push({ url, options });
@@ -258,9 +258,19 @@ test('central flow requests preserve optional member bearer tokens', async () =>
     sessionStorage.setItem('careerlens.backend.access-token', 'ordinary-member');
     await api('/flow/sources?limit=100');
     assert.equal(calls[0].options.headers.Authorization, undefined);
-    assert.equal(calls[1].options.headers.Authorization, 'Bearer ordinary-member');
+    assert.equal(calls[1].options.headers.Authorization, undefined);
     assert.equal(calls[0].options.method, 'POST');
   });
+});
+
+test('live operational snapshots bypass browser caches and member credentials', async () => {
+  sessionStorage.setItem('careerlens.backend.access-token', 'ordinary-member');
+  await withFetch(async (url, options) => {
+    assert.equal(url, '/api/v1/admin/activity-flow');
+    assert.equal(options.cache, 'no-store');
+    assert.equal(options.headers.Authorization, undefined);
+    return Response.json({ runs: [], browser_sources: [] });
+  }, () => api('/admin/activity-flow'));
 });
 
 test('public dashboard uses the sanitized native route without transmitting a member token', async () => {

@@ -118,7 +118,7 @@ async function requestApi(
       method,
       headers,
       credentials: 'same-origin',
-      ...(/^\/(?:admin|member)\/evaluation-performance(?:[/?]|$)/.test(path) || /^\/local-data\/execution-reports(?:[/?]|$)/.test(path) ? { cache: 'no-store' } : {}),
+      ...(/^\/(?:admin|member)\/(?:evaluation-performance|activity-flow)(?:[/?]|$)/.test(path) || /^\/local-data\/execution-reports(?:[/?]|$)/.test(path) ? { cache: 'no-store' } : {}),
       signal,
       keepalive,
       body: body === undefined ? undefined : multipart ? body : JSON.stringify(body),

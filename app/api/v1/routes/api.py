@@ -178,6 +178,40 @@ async def public_activity(request: Request):
     return await request.app.state.realtime.snapshot(request.app.state.db)
 
 
+@router.post('/flow/events', status_code=202, tags=['portfolio'])
+async def browser_flow_events(request: Request):
+    from app.infrastructure.browser_flow import FlowInputError
+    if request.headers.get('content-type', '').split(';', 1)[0].strip().lower() != 'application/json':
+        raise HTTPException(415, 'JSON 메타데이터만 전송할 수 있습니다.')
+    try:
+        declared = int(request.headers.get('content-length', '0'))
+    except ValueError:
+        raise HTTPException(400, '요청 크기를 확인하세요.') from None
+    if declared > 65536:
+        raise HTTPException(413, '관측 데이터는 요청당 64KB까지 전송할 수 있습니다.')
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 65536:
+            raise HTTPException(413, '관측 데이터는 요청당 64KB까지 전송할 수 있습니다.')
+        body.extend(chunk)
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeError, RecursionError):
+        raise HTTPException(400, '관측 데이터 형식을 확인하세요.') from None
+    try:
+        result = await asyncio.to_thread(request.app.state.realtime.browser_flow.ingest, payload,
+                                         request.client.host if request.client else 'unknown')
+    except FlowInputError as error:
+        raise HTTPException(error.status, '허용된 화면 관측 메타데이터만 전송할 수 있습니다.') from None
+    if not result['available']:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(result, status_code=503)
+    if not result.get('accepted'):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(result, status_code=429, headers={'Retry-After': str(result['retry_after'])})
+    return result
+
+
 @router.get('/admin/evaluation-performance/{run_id}', tags=['portfolio'])
 async def public_performance_detail(run_id: UUID, request: Request):
     from app.application.public_performance import detail
