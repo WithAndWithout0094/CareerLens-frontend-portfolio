@@ -4,13 +4,14 @@ import { createFlowGraph, FLOW_GRAPH, summaryObservation, overviewConnections, a
 import { makeNodeDemo, createExplorerPlayback } from '../../src/features/activity-flow/explorer-demo.js';
 import { overviewMarkup } from '../../src/features/activity-flow/explorer-dialog.js';
 import { FLOW_NODES } from '../../src/features/activity-flow/catalog.js';
+import { EXAMPLE_CRITERION_CONTRACTS } from '../../src/features/activity-flow/explorer-example-contracts.js';
 
 const graph = () => createFlowGraph({ version: 1, sourceDigest: 'fixture', limitations: [],
   nodes: [
     { id: 'start', label: '시작', kind: 'stage' }, { id: 'analysis', label: '분석', kind: 'stage' },
     { id: 'domain_a', label: '완성도', kind: 'domain', parentId: 'analysis' },
-    { id: 'criterion:A1', label: '경험 근거', kind: 'criterion', parentId: 'domain_a' },
-    { id: 'criterion:A2', label: '성과 근거', kind: 'criterion', parentId: 'domain_a' },
+    { id: 'criterion:A1', label: '경험 설명의 구체성', kind: 'criterion', parentId: 'domain_a', contract: EXAMPLE_CRITERION_CONTRACTS.A1 },
+    { id: 'criterion:A2', label: '성과 근거의 명확성', kind: 'criterion', parentId: 'domain_a', contract: EXAMPLE_CRITERION_CONTRACTS.A2 },
     { id: 'end', label: '끝', kind: 'stage' }, { id: 'branch', label: '다른 끝', kind: 'stage' },
   ],
   overview: [{ id: 'analysis', label: '분석', description: '분석 요약', members: ['analysis', 'domain_a', 'criterion:A1', 'criterion:A2'] }],
@@ -58,7 +59,7 @@ test('selection uses node-specific examples and domains expose their actual chil
   const first = makeNodeDemo(model, 'criterion:A1'), second = makeNodeDemo(model, 'criterion:A2');
   assert.notEqual(first.title, second.title);
   assert.notEqual(first.input, second.input);
-  assert.deepEqual(makeNodeDemo(model, 'domain_a').outputs.map((entry) => entry.label), ['경험 근거', '성과 근거']);
+  assert.deepEqual(makeNodeDemo(model, 'domain_a').outputs.map((entry) => entry.label), ['경험 설명의 구체성', '성과 근거의 명확성']);
   assert.deepEqual(makeNodeDemo(model, 'analysis').outputs.map((entry) => entry.label), ['완성도']);
   assert.equal(makeNodeDemo(model, 'criterion:A1', 'failure').outcome, 'failure');
   assert.equal(makeNodeDemo(model, 'missing'), null);
@@ -85,4 +86,91 @@ test('summary state aggregates only instrumented member events, preserving activ
   const values = new Map([['api_auth', { node: 'api_auth', at: 10, state: 'pending' }], ['auth', { node: 'auth', at: 20, state: 'member' }]]);
   const summary = summaryObservation({ members: ['api_auth', 'auth', 'not-instrumented'] }, (id) => values.get(id));
   assert.equal(summary.latest.node, 'api_auth'); assert.equal(summary.activeCount, 1); assert.equal(summary.observedCount, 2);
+});
+
+test('login, logout, cancellation and locked reports model different user state transitions', () => {
+  const login = makeNodeDemo(FLOW_GRAPH, 'auth'), logout = makeNodeDemo(FLOW_GRAPH, 'logout');
+  assert.match(login.input, /비회원/); assert.match(login.outputs[0].value, /인증 상태: 회원/);
+  assert.match(logout.input, /인증 상태: 회원/); assert.match(logout.action, /비웁/);
+  assert.match(logout.outputs[0].value, /인증 상태: 비회원/); assert.match(logout.outputs[0].value, /표시 이름 제거/);
+  assert.doesNotMatch(logout.outputs[0].value, /로그인된|회원 상태 유지/);
+  assert.match(makeNodeDemo(FLOW_GRAPH, 'cancel').outputs[0].value, /상태: 취소/);
+  assert.match(makeNodeDemo(FLOW_GRAPH, 'report_lock').outputs[0].value, /잠금 유지.*로그인 필요/);
+  assert.match(makeNodeDemo(FLOW_GRAPH, 'guest_claim').outputs[0].value, /계정에 연결됨.*추가 분석 없음/);
+});
+
+test('resume, job, request, report and dashboard demonstrate their own inputs and outputs', () => {
+  const cases = [
+    ['resume', /이력서/, /본문과 기술 항목/], ['role', /희망 직무/, /관련 가상 공고 목록/],
+    ['posting', /공고 목록/, /선택 공고 1건/], ['evaluate', /이력서.*공고/, /대기 상태.*보고서 결과는 없음/],
+    ['report', /작성 완료.*보고서/, /표시 완료.*재분석하지 않음/], ['dashboard', /대기 1건.*처리 중 1건.*완료 1건/, /대기 1.*처리 중 1.*완료 1/],
+  ];
+  for (const [id, input, output] of cases) {
+    const example = makeNodeDemo(FLOW_GRAPH, id);
+    assert.equal(example.presentation, 'functional', id); assert.match(example.input, input, id); assert.match(example.outputs[0].value, output, id);
+    assert.notEqual(makeNodeDemo(FLOW_GRAPH, id, 'failure').outputs[0].value, example.outputs[0].value);
+  }
+});
+
+test('C2 compares academic requirements and avoids unrelated implementation-role evidence', () => {
+  const c2 = makeNodeDemo(FLOW_GRAPH, 'criterion:C2');
+  assert.equal(c2.presentation, 'functional');
+  assert.match(c2.input, /학사 이상.*전공 조건 없음.*인문학 학사/);
+  assert.match(c2.action, /없는 전공 제한을 추가하지/);
+  assert.equal(c2.outputs.find((entry) => entry.label === '가상 점수').value, '100 / 100');
+  assert.match(c2.outputs.find((entry) => entry.label === '판단 근거').value, /학사 조건.*전공 조건이 없으므로.*감점하지/);
+  assert.doesNotMatch(c2.input + c2.action + c2.outputs.find((entry) => entry.label === '판단 근거').value, /본인 역할|구현 범위|검증 결과/);
+  const c1 = makeNodeDemo(FLOW_GRAPH, 'criterion:C1');
+  assert.match(c1.input, /24개월.*12개월/); assert.match(c1.outputs.find((entry) => entry.label === '판단 근거').value, /미충족/);
+  const b1 = makeNodeDemo(FLOW_GRAPH, 'criterion:B1');
+  assert.match(b1.input, /JavaScript.*API 연동/); assert.match(b1.action, /필수 기술.*직접 구현/);
+});
+
+test('all current rubric examples bind to exact source semantics and have distinct evidence', () => {
+  const examples = Object.keys(EXAMPLE_CRITERION_CONTRACTS).map((code) => makeNodeDemo(FLOW_GRAPH, `criterion:${code}`));
+  assert.equal(examples.length, 12);
+  assert.ok(examples.every((entry) => entry.presentation === 'functional'));
+  assert.equal(new Set(examples.map((entry) => entry.input)).size, 12);
+  assert.equal(new Set(examples.map((entry) => entry.outputs.find((output) => output.label === '판단 근거').value)).size, 12);
+});
+
+test('new or changed rubric meanings fall back to the current source contract, not stale examples', () => {
+  const manifest = structuredClone(FLOW_GRAPH.manifest);
+  const c2 = manifest.nodes.find((node) => node.id === 'criterion:C2');
+  c2.contract.anchors = '새 코드 기준: 학력 대신 별도의 선언된 조건';
+  const model = createFlowGraph(manifest), changed = makeNodeDemo(model, c2.id);
+  assert.equal(changed.presentation, 'structure'); assert.match(changed.title, /구조 시연/);
+  assert.ok(changed.outputs.some((entry) => entry.value === c2.contract.anchors));
+  assert.ok(changed.outputs.every((entry) => entry.label !== '가상 점수'));
+  const newCriterion = { ...c2, id: 'criterion:C4', label: '새 기준', contract: { ...c2.contract, code: 'C4', name: '새 기준' } };
+  manifest.nodes.push(newCriterion);
+  assert.equal(makeNodeDemo(createFlowGraph(manifest), 'criterion:C4').presentation, 'structure');
+  assert.equal(makeNodeDemo(model, 'domain_c').presentation, 'structure', 'changed child invalidates aggregate fiction too');
+});
+
+test('internal API and schema cards show declared contracts without invented HTTP success', () => {
+  const api = [...FLOW_GRAPH.nodes.values()].find((node) => node.kind === 'api');
+  const example = makeNodeDemo(FLOW_GRAPH, api.id);
+  assert.equal(example.presentation, 'structure'); assert.match(example.input, /실제 선언:/);
+  assert.match(example.action, /HTTP 요청이나 가상 200 응답을 만들지/);
+  assert.ok(example.outputs.every((entry) => !/200.*응답/.test(entry.value)));
+  const schema = [...FLOW_GRAPH.nodes.values()].find((node) => node.id.startsWith('field:'));
+  const field = makeNodeDemo(FLOW_GRAPH, schema.id);
+  assert.equal(field.presentation, 'structure'); assert.match(field.title, /구조 시연/);
+  assert.doesNotMatch(field.outputs.map((entry) => entry.value).join(' '), /이 필드에 대응하는 예시 값/);
+});
+
+test('a cancelled resume callback cannot advance the newly selected card or a restarted run', () => {
+  const tasks = [];
+  const runner = createExplorerPlayback({ schedule: (fn) => { tasks.push(fn); return tasks.length; }, cancel() {} });
+  runner.select(makeNodeDemo(FLOW_GRAPH, 'criterion:A1')); runner.play(); runner.pause(); runner.resume();
+  const cancelledResume = tasks.at(-1);
+  runner.select(makeNodeDemo(FLOW_GRAPH, 'criterion:B1')); runner.play();
+  assert.equal(runner.snapshot().index, 0);
+  cancelledResume();
+  assert.equal(runner.snapshot().nodeId, 'criterion:B1'); assert.equal(runner.snapshot().index, 0);
+  runner.pause(); runner.resume(); const cancelledSameCard = tasks.at(-1);
+  runner.reset(); runner.play(); cancelledSameCard();
+  assert.equal(runner.snapshot().index, 0);
+  runner.destroy();
 });

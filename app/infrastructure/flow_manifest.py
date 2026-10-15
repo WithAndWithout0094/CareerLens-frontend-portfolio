@@ -459,6 +459,12 @@ class Builder:
             ident = f'criterion:{code}'
             self.node(ident, f'{code} · {label}', kind='criterion', parent=domains[domain], group='analysis',
                       description='실제 평가 기준 · 시연 값은 가상의 예시입니다.', ref=self.ref(rubric_path, f'CRITERIA/{code}', criterion_lines.get(code, 1)))
+            # Public rubric semantics let a hand-authored example detect drift.
+            # These are executable rubric constants, never model/user results.
+            self.nodes[ident]['contract'] = {
+                'code': code, 'name': label, 'domain': domain,
+                'weight': row[3], 'anchors': row[4],
+            }
             self.edge(ident, 'schema:CriterionResult', 'produces')
             self.edge(ident, 'schema:CriterionView', 'produces')
 

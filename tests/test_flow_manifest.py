@@ -67,7 +67,10 @@ def test_manifest_compiles_without_invoking_analysis_or_loading_secrets(monkeypa
     assert all(edge['from'] in nodes and edge['to'] in nodes for edge in manifest['edges'])
     assert all(ref['path'] and not Path(ref['path']).is_absolute()
                for node in nodes.values() for ref in node['sourceRefs'])
-    assert all(set(node) <= {'id', 'label', 'description', 'kind', 'sourceRefs', 'parentId'} for node in nodes.values())
+    assert all(set(node) <= {'id', 'label', 'description', 'kind', 'sourceRefs', 'parentId', 'contract'} for node in nodes.values())
+    contracts = [node['contract'] for node in nodes.values() if 'contract' in node]
+    assert len(contracts) == 12
+    assert all(set(contract) == {'code', 'name', 'domain', 'weight', 'anchors'} for contract in contracts)
 
 
 def test_real_route_and_schema_addition_removal_updates_cards(checkout):
@@ -111,8 +114,30 @@ def test_rubric_criterion_and_timed_pipeline_changes_appear(checkout):
     nodes = {node['id']: node for node in manifest['nodes']}
     assert nodes['criterion:A4']['parentId'] == 'domain_a'
     assert nodes['criterion:A4']['label'] == 'A4 · 새 실행 기준'
+    assert nodes['criterion:A4']['contract'] == {
+        'code': 'A4', 'name': '새 실행 기준', 'domain': 'resume_completeness',
+        'weight': .1, 'anchors': 'source mutation',
+    }
     assert {'from': 'stage:match_result_save', 'to': 'stage:new_source_stage', 'kind': 'flow'} in manifest['edges']
     assert {'from': 'stage:new_source_stage', 'to': 'stage:report_render', 'kind': 'flow'} in manifest['edges']
+
+
+def test_existing_criterion_semantics_change_without_changing_its_identity(checkout):
+    replace(checkout, 'app/modules/analysis/scoring/rubric.py',
+            "('C2', 'qualifications', '학력·전공 충족도', .25,",
+            "('C2', 'qualifications', '학력 근거 재확인', .20,")
+    replace(checkout, 'app/modules/analysis/scoring/rubric.py',
+            '명시 학력 최소 조건 충족 100, 미충족 0;',
+            '변경된 학력 기준: 명시된 학위 근거를 확인;')
+    manifest = generate(checkout)
+    nodes = {node['id']: node for node in manifest['nodes']}
+    contract = nodes['criterion:C2']['contract']
+    assert contract['code'] == 'C2'
+    assert contract['domain'] == 'qualifications'
+    assert contract['name'] == '학력 근거 재확인'
+    assert contract['weight'] == .20
+    assert contract['anchors'].startswith('변경된 학력 기준: 명시된 학위 근거를 확인;')
+    assert nodes['criterion:C2']['parentId'] == 'domain_c'
 
 
 @pytest.mark.parametrize('path,before,after', [

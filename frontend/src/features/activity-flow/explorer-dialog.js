@@ -75,12 +75,12 @@ export function mountFlowExplorer(host, { graph = FLOW_GRAPH } = {}) {
     </div>`;
   }
   function demoMarkup() {
-    return `<section class="flow-explorer-demo" data-explore-content tabindex="-1" aria-label="선택 기능의 가상 시연"><h3>${esc(currentDemo.title)}</h3><p>이 창 안에서만 실행하는 예시입니다. 실제 로그인·분석·저장 요청은 보내지 않습니다.</p>
-      <label class="flow-explorer-scenario">시연 상황<select data-explore-scenario><option value="success" ${scenario === 'success' ? 'selected' : ''}>성공 예시</option><option value="failure" ${scenario === 'failure' ? 'selected' : ''}>실패 예시</option></select></label>
+    return `<section class="flow-explorer-demo" data-explore-content tabindex="-1" aria-label="선택 기능의 가상 시연"><h3>${esc(currentDemo.title)}</h3><p>${esc(currentDemo.explanation)}</p>
+      <label class="flow-explorer-scenario">시연 상황<select data-explore-scenario><option value="success" ${scenario === 'success' ? 'selected' : ''}>정상 예시</option><option value="failure" ${scenario === 'failure' ? 'selected' : ''}>오류 예시</option></select></label>
       <div class="flow-explorer-demo-controls"><button type="button" data-explore-play>시연 시작</button><button type="button" data-explore-pause disabled>일시정지</button><button type="button" data-explore-reset>처음으로</button></div>
       <ol class="flow-explorer-demo-steps">${currentDemo.steps.map((step, index) => `<li data-explore-step="${index}"><strong>${esc(step.label)}</strong><p>${esc(step.message)}</p><span data-explore-step-state>대기</span></li>`).join('')}</ol>
       <p class="flow-explorer-demo-status" role="status" aria-live="polite" data-explore-demo-status>시연을 시작해 입력부터 출력까지 확인하세요.</p>
-      <section class="flow-explorer-demo-output" data-explore-output hidden><h4>가상 출력</h4><dl>${currentDemo.outputs.map((entry) => `<div><dt>${esc(entry.label)}</dt><dd>${esc(entry.value)}</dd></div>`).join('')}</dl><p>학습용 가상 값입니다. 실제 평가 결과나 실행 시간이 아닙니다.</p></section></section>`;
+      <section class="flow-explorer-demo-output" data-explore-output hidden><h4>${currentDemo.presentation === 'structure' ? '현재 코드의 구조' : '가상 출력'}</h4><dl>${currentDemo.outputs.map((entry) => `<div><dt>${esc(entry.label)}</dt><dd>${esc(entry.value)}</dd></div>`).join('')}</dl><p>${currentDemo.presentation === 'structure' ? '생성된 소스 계약의 설명입니다. 실제 함수 호출·API 요청·저장은 하지 않았습니다.' : '학습용 가상 값입니다. 실제 평가 결과나 실행 시간이 아닙니다.'}</p></section></section>`;
   }
   function renderDemoState(state = playback.snapshot()) {
     if (!dialog.open || tab !== 'demo') return;

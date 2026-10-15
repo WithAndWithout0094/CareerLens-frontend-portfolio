@@ -1,51 +1,95 @@
 import { analysisDomains } from './explorer-model.js';
+import { OPERATION_EXAMPLES, OVERVIEW_EXAMPLES, CRITERION_EXAMPLES } from './explorer-examples.js';
+import { EXAMPLE_CRITERION_CONTRACTS } from './explorer-example-contracts.js';
 
-// Isolated, deterministic examples. This module has no network, account,
-// storage, telemetry, or model client dependency.
+// All examples stay in memory. The manifest supplies contracts, never a client
+// that can invoke the selected API, helper, database, or paid model.
+const relationLabel = { flow: '처리 순서', conditional: '조건 분기', calls: '호출 대상', contains: '하위 구성', produces: '생성 구조' };
+
+function matchingCriterion(node) {
+  const code = node.id.replace(/^criterion:/, ''), expected = EXAMPLE_CRITERION_CONTRACTS[code], actual = node.contract;
+  return expected && actual && ['code', 'name', 'domain', 'weight', 'anchors'].every((field) => expected[field] === actual[field])
+    && node.label.includes(expected.name) ? CRITERION_EXAMPLES[code] : null;
+}
+
+function structureExample(graph, node, failed) {
+  const outgoing = graph.edges.filter((edge) => edge.from === node.id);
+  const incoming = graph.edges.filter((edge) => edge.to === node.id);
+  const fields = node.contract ? Object.entries(node.contract).map(([key, value]) => ({ label: key, value: typeof value === 'string' ? value : JSON.stringify(value) })) : [];
+  const sources = (node.sourceRefs || []).map((ref) => `${ref.path}${ref.symbol ? ` · ${ref.symbol}` : ''}`).join(' / ');
+  const api = /^api:([A-Z]+):(.+)$/.exec(node.id);
+  const input = api ? `실제 선언: ${api[1]} ${api[2]} · 요청 본문이나 인증값은 실행하지 않습니다.`
+    : `${node.label}의 현재 코드 선언${fields.length ? ` · 계약 필드 ${fields.length}개` : ''}${sources ? ` · ${sources}` : ''}`;
+  const action = api ? '요청 방식·경로 선언을 읽고 연결된 처리 함수와 응답 구조를 따라갑니다. HTTP 요청이나 가상 200 응답을 만들지 않습니다.'
+    : '선택한 카드의 소스 근거와 선언된 구성·호출·응답 관계를 순서대로 펼칩니다. 함수의 실제 반환값을 추정하지 않습니다.';
+  const outputs = failed ? [{ label: '구조 확인 중단 예시', value: `${node.label}에 필요한 코드 근거를 읽지 못했다고 가정합니다. 실행 성공이나 반환값을 표시하지 않습니다.` }]
+    : [...fields, ...outgoing.map((edge) => ({ label: relationLabel[edge.kind] || edge.kind, value: graph.node(edge.to)?.label || edge.to })),
+      ...incoming.map((edge) => ({ label: `들어오는 ${relationLabel[edge.kind] || edge.kind}`, value: graph.node(edge.from)?.label || edge.from }))];
+  if (!outputs.length) outputs.push({ label: '현재 선언', value: node.description || node.label }, { label: '구조 범위', value: '수집된 하위·호출 연결 없음 · 실행 결과는 추정하지 않음' });
+  return { input, action, outputs, presentation: 'structure', explanation: '구조 시연입니다. 현재 소스에 선언된 계약과 연결을 보여주며, 함수 실행 결과나 평가 점수를 만들지 않습니다.' };
+}
+
+function operationExample(example, failed) {
+  return { input: failed ? `${example[0]} · 이 기능에서 오류가 발생하는 상황을 가정합니다.` : example[0], action: example[1],
+    outputs: [{ label: failed ? '가상 오류 결과' : '가상 기능 결과', value: failed ? example[3] : example[2] }],
+    presentation: 'functional', explanation: '선택한 사용자 기능의 가상 입력·상태 변화를 재현합니다. 실제 계정·분석·저장 요청은 실행하지 않습니다.' };
+}
+
+function criterionExample(node, failed) {
+  const example = matchingCriterion(node);
+  if (!example) return null;
+  return { input: failed ? `${example[1]} · 평가 응답을 확인할 수 없는 오류 상황` : example[1], action: example[2],
+    outputs: failed ? [{ label: '평가 중단 예시', value: example[5] }]
+      : [{ label: '평가 항목', value: node.contract.name }, { label: '가상 점수', value: `${example[3]} / 100` }, { label: '판단 근거', value: example[4] }, { label: '현재 코드의 평가 기준', value: node.contract.anchors }],
+    presentation: 'functional', explanation: '현재 평가 기준과 일치하는 학습용 예시입니다. 점수와 입력은 가상이며 실제 사용자의 평가가 아닙니다.' };
+}
+
+function domainExample(graph, node, failed) {
+  const criteria = graph.children(node.id).map((id) => graph.node(id)).filter((child) => child?.id.startsWith('criterion:'));
+  if (!criteria.length || criteria.some((child) => !matchingCriterion(child))) return null;
+  const outcomes = criteria.map((child) => ({ child, sample: matchingCriterion(child) }));
+  return { input: outcomes.map(({ child, sample }) => `${child.contract.name}: ${sample[1]}`).join('\n'),
+    action: `${node.label}의 각 기준을 독립적으로 확인합니다. 아래 항목별 가상 점수는 실제 결과가 아닙니다.`,
+    outputs: failed ? [{ label: '영역 평가 중단 예시', value: `${outcomes[0].child.contract.name}의 평가 응답이 유효하지 않아 영역 완료로 표시하지 않습니다.` }]
+      : outcomes.map(({ child, sample }) => ({ label: child.label, value: `${sample[3]} / 100 · ${sample[4]}` })),
+    presentation: 'functional', explanation: '현재 영역에 속한 실제 평가 기준별로 서로 다른 가상 입력과 판단 근거를 보여줍니다.' };
+}
+
 export function makeNodeDemo(graph, id, outcome = 'success') {
   const node = graph.node(id);
   if (!node) return null;
-  const group = node.kind === 'overview' ? node : graph.groupFor(id);
-  const family = group?.sourceId || '';
-  const children = graph.children(id).map((child) => graph.node(child)).filter(Boolean);
-  const criterion = id.startsWith('criterion:');
-  const domain = node.kind === 'domain' || /^domain_[a-z]+$/.test(id);
-  const samples = {
-    auth: { input: '가상 계정: 체험 사용자 · 예시 인증 상태: 비회원', action: '예시 입력 확인 → 인증 응답 처리 → 화면 상태 반영', output: '체험 사용자로 로그인된 예시 화면 상태' },
-    resume: { input: '가상 이력서: 웹 프로젝트 1건, JavaScript·Python, 협업 경험', action: '예시 문서 확인 → 내용 추출 → 구조화 결과 준비', output: '경험 1건 · 기술 2개 · 이력서 준비 완료 예시' },
-    posting: { input: '가상 공고: 프론트엔드 개발 · JavaScript와 API 연동 경험', action: '예시 직무 검색 → 공고 조건 읽기 → 선택 상태 구성', output: '가상 프론트엔드 공고 1건 선택' },
-    evaluate: { input: '가상 이력서 1건 + 가상 공고 1건', action: '입력 확인 → 가상 요청 생성 → 예시 진행 상태 수신', output: '가상 분석 요청 준비 완료 · 실제 요청 없음' },
-    analysis: { input: '가상 경험: 입력 폼·API 연동 구현 / 가상 요건: 웹 개발 경험', action: '예시 근거 읽기 → 항목별 판단 → 결과 형식 구성', output: '예시 평가 결과 준비 완료' },
-    report: { input: '가상 평가 결과 + 예시 인증 완료 상태', action: '예시 결과 확인 → 보고서 형식 구성 → 화면 표시', output: '가상 보고서 표시 완료 · 실제 보고서 저장 없음' },
-    dashboard: { input: '가상 실행 3건: 대기 1 · 처리 중 1 · 완료 1', action: '예시 상태 분류 → 운영 지표 묶기 → 읽기 전용 표시', output: '가상 실행 요약 3건 · 실제 운영 기록 아님' },
-  };
-  const sample = samples[family] || { input: `${node.label}용 가상 입력`, action: `${node.label}의 입력·처리·출력 예시`, output: `${node.label}의 가상 처리 결과` };
-  let input = sample.input, action = `${node.label}: ${sample.action}`;
-  let outputs = [{ label: node.label, value: sample.output }];
-  if (criterion) {
-    input = `가상 이력서·공고에서 추출한 예시 근거 · 평가 항목: ${node.label}`;
-    action = `${node.label} 기준으로 예시 근거와 판단을 연결합니다.`;
-    outputs = [{ label: '평가 항목', value: node.label }, { label: '가상 점수', value: '75 / 100' },
-      { label: '예시 근거', value: '구현 범위와 본인 역할은 있으나 검증 결과 설명이 더 필요합니다.' }];
-  } else if (domain) {
-    action = `${node.label}의 하위 기준을 각각 확인하고 예시 결과로 묶습니다.`;
-    outputs = children.filter((child) => child.id.startsWith('criterion:')).map((child, index) => ({ label: child.label, value: `${[75, 80, 65][index % 3]} / 100 · 가상 점수` }));
-  } else if (id === 'analysis' || id === 'overview:analysis') {
-    outputs = analysisDomains(graph).map((key) => graph.node(key)).filter(Boolean)
-      .map((child, index) => ({ label: child.label, value: `${[78, 72, 85, 68][index]} / 100 · 가상 점수` }));
-  } else if (node.kind === 'api' || id.startsWith('api:')) {
-    input = `가상 요청: ${id.replace(/^api:/, '')} · 비밀정보 없는 예시 입력`;
-    action = `${node.label}의 요청·응답 순서만 브라우저 안에서 시연합니다.`;
-    outputs = [{ label: '예시 응답', value: '200 · 예시 응답 구조 확인' }, { label: '대상 기능', value: node.label }];
-  } else if (id.startsWith('field:') || node.kind === 'field') {
-    input = `가상 데이터 필드: ${node.label}`;
-    outputs = [{ label: node.label, value: '이 필드에 대응하는 예시 값' }];
-  } else if (children.length && !outputs.length) outputs = children.map((child) => ({ label: child.label, value: '가상 처리 완료' }));
-  if (!outputs.length) outputs = [{ label: node.label, value: sample.output }];
-  if (outcome === 'failure') outputs = [{ label: `${node.label} 예외 예시`, value: '입력 또는 응답을 확인할 수 없어 이 단계에서 중단했습니다. 이전 실제 데이터는 바뀌지 않습니다.' }];
-  return { nodeId: id, title: `${node.label} ${outcome === 'failure' ? '실패' : '성공'} 시연`, input, action, outputs, outcome,
-    steps: [ { label: '가상 입력 준비', message: input }, { label: `${node.label} 처리`, message: action },
-      { label: outcome === 'failure' ? '예외 안내' : '가상 출력 확인', message: outputs.map((entry) => `${entry.label}: ${entry.value}`).join(' · ') } ] };
+  const failed = outcome === 'failure';
+  let example = null;
+  if (id.startsWith('criterion:')) example = criterionExample(node, failed);
+  else if (node.kind === 'domain' || /^domain_[a-z]+$/.test(id)) example = domainExample(graph, node, failed);
+  else if (id === 'analysis' || id === 'overview:analysis') {
+    const domains = analysisDomains(graph).map((key) => graph.node(key));
+    const domainExamples = domains.map((domain) => domainExample(graph, domain, false));
+    if (domains.length && domainExamples.every(Boolean)) example = {
+      input: '학습용 가상 이력서와 공고의 경험·기술·업무·경력·학력·기타 조건을 영역별로 나누어 입력합니다.',
+      action: '각 영역의 실제 평가 기준에 대응하는 가상 근거를 확인하고 영역별 항목 결과를 출력합니다.',
+      outputs: failed ? [{ label: '분석 중단 예시', value: '영역 중 하나의 평가 응답이 유효하지 않아 전체 완료 결과를 만들지 않습니다.' }]
+        : domains.map((domain, index) => ({ label: domain.label, value: domainExamples[index].outputs.map((entry) => `${entry.label}: ${entry.value}`).join(' / ') })),
+      presentation: 'functional', explanation: '현재 코드의 평가 영역과 기준에 맞춘 가상 결과입니다. 각 영역 카드를 열면 해당 입력과 근거를 볼 수 있습니다.' };
+  } else if (id === 'scoring') {
+    const domains = analysisDomains(graph).map((key) => graph.node(key));
+    const criteria = domains.flatMap((domain) => graph.children(domain.id).map((key) => graph.node(key))).filter((child) => child?.id.startsWith('criterion:'));
+    if (criteria.length && criteria.every(matchingCriterion)) example = {
+      input: criteria.map((criterion) => `${criterion.contract.code}=${matchingCriterion(criterion)[3]}, 영역 내 가중치=${criterion.contract.weight}`).join(' · '),
+      action: '현재 코드의 항목 가중치와 예시 점수를 읽습니다. 아래는 영역 내 가중합이며 전체 가중치 합산과 구분합니다.',
+      outputs: failed ? [{ label: '계산 중단 예시', value: '필수 항목 점수가 없어 최종 점수를 0으로 대체하지 않고 계산을 중단합니다.' }]
+        : domains.map((domain) => ({ label: `${domain.label} 예시 가중합`, value: String(graph.children(domain.id).map((key) => graph.node(key)).filter((child) => child?.id.startsWith('criterion:')).reduce((total, criterion) => total + matchingCriterion(criterion)[3] * criterion.contract.weight, 0)) })),
+      presentation: 'functional', explanation: '가중치 구조를 설명하기 위한 가상 점수 계산입니다. 실제 보고서의 최종 점수가 아닙니다.' };
+  } else {
+    const fixture = node.kind === 'overview' ? OVERVIEW_EXAMPLES[node.sourceId] : OPERATION_EXAMPLES[id];
+    if (fixture) example = operationExample(fixture, failed);
+  }
+  example ||= structureExample(graph, node, failed);
+  const structural = example.presentation === 'structure';
+  return { nodeId: id, title: `${node.label} ${structural ? '구조 시연' : '기능 시연'} · ${failed ? '오류 예시' : '정상 예시'}`, ...example, outcome: failed ? 'failure' : 'success',
+    steps: [{ label: structural ? '현재 선언 읽기' : '가상 입력 준비', message: example.input },
+      { label: structural ? '선택한 코드 관계 탐색' : `${node.label} 처리`, message: example.action },
+      { label: failed ? '오류 안내' : structural ? '현재 계약 확인' : '가상 출력 확인', message: example.outputs.map((entry) => `${entry.label}: ${entry.value}`).join(' · ') }] };
 }
 
 // Navigation owns this runner. Every selection invalidates outstanding work.
@@ -64,7 +108,7 @@ export function createExplorerPlayback({ schedule = setTimeout, cancel = clearTi
     select(demo) { stop(); selected = demo; index = -1; status = 'idle'; emit(); },
     play() { if (!selected || destroyed) return; stop(); index = -1; status = 'playing'; advance(generation); },
     pause() { if (status !== 'playing') return; stop(); status = 'paused'; emit(); },
-    resume() { if (status !== 'paused' || destroyed) return; status = 'playing'; timer = schedule(() => advance(generation), 900); emit(); },
+    resume() { if (status !== 'paused' || destroyed) return; status = 'playing'; const token = generation; timer = schedule(() => advance(token), 900); emit(); },
     reset() { stop(); index = -1; status = 'idle'; emit(); },
     snapshot,
     destroy() { stop(); selected = null; destroyed = true; },
