@@ -66,6 +66,31 @@
   margin-top: 12px;
 }
 
+.my-page__profile-form {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  max-width: 640px;
+  margin-top: 20px;
+}
+
+.my-page__profile-form .field {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
+}
+
+.my-page__profile-form > p {
+  flex-basis: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.my-page__profile-form [role='status']:empty {
+  display: none;
+}
+
 .saved-reports {
   margin-top: 36px;
 }

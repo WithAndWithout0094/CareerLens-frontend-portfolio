@@ -76,6 +76,7 @@ let disposeIntroduction;
 let disposeReportGate;
 let guestExpiryTimer;
 let accountRequest;
+let profileRequest;
 let previousFlowRoute;
 const flowSource = () => session?.user?.demo === true ? 'demo' : 'observed';
 
@@ -137,6 +138,8 @@ function stopReportVisuals({ preserveLoading } = {}) {
   roleRequest = undefined;
   accountRequest?.abort();
   accountRequest = undefined;
+  profileRequest?.abort();
+  profileRequest = undefined;
   disposeStatusRadar?.();
   disposeStatusRadar = undefined;
   disposeReportPicker?.();
@@ -712,7 +715,10 @@ function render({ reportBridge } = {}) {
     disposeAdminDashboard = mountAdminDashboard(app, { user: session.user, api });
   } else if (page === 'mypage') {
     app.innerHTML = shell(
-      myPage(session.user, { hasCurrentReport: Boolean(workspace.draft.report) }),
+      myPage(session.user, {
+        hasCurrentReport: Boolean(workspace.draft.report),
+        canUpdateProfile: session.capabilities?.profile_update === true,
+      }),
       {
         user: session.user,
         page,
@@ -721,6 +727,7 @@ function render({ reportBridge } = {}) {
     );
     bindAccount();
     bindSavedReports();
+    bindProfileName();
   } else if (savedReportRoute) {
     app.innerHTML = shell(savedReportStatus('저장한 분석보고서를 불러오는 중입니다.'), {
       user: session.user,
@@ -1367,6 +1374,62 @@ async function bindCareerRoleOptions() {
     });
     document.getElementById('career-role-options').append(retry);
   }
+}
+
+function bindProfileName() {
+  const form = document.getElementById('profile-name-form');
+  if (!form || !session.user || session.user.demo) return;
+  const input = document.getElementById('profile-name');
+  const feedback = document.getElementById('profile-name-status');
+  const button = form.querySelector('button[type="submit"]');
+  const controller = new AbortController();
+  profileRequest?.abort();
+  profileRequest = controller;
+  const revision = viewRevision;
+  const owner = session.user.id;
+  let saving = false;
+  const current = () => !controller.signal.aborted && revision === viewRevision && owner === session.user?.id;
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (saving || !current()) return;
+    const name = input.value.trim();
+    if (!name || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name)) {
+      feedback.textContent = '이름은 공백만 입력할 수 없으며, 줄바꿈 없이 1~80자로 입력해 주세요.';
+      input.focus();
+      return;
+    }
+    saving = true;
+    input.disabled = true;
+    button.disabled = true;
+    feedback.textContent = '이름을 저장하는 중…';
+    try {
+      const result = await api('/account/profile', { method: 'PATCH', body: { name }, signal: controller.signal });
+      if (!current()) return;
+      const profile = result?.user;
+      if (profile?.id !== owner || typeof profile.name !== 'string' || !profile.name.trim())
+        throw Object.assign(new Error('Invalid profile response'), { status: 502 });
+      session = { ...session, user: { ...session.user, name: profile.name.trim(),
+        email: typeof profile.email === 'string' ? profile.email.trim() : '' } };
+      const nameLabel = document.querySelector('[data-account-name]');
+      const emailLabel = document.querySelector('[data-account-email]');
+      const headerLabel = document.querySelector('.account-name');
+      if (nameLabel) nameLabel.textContent = session.user.name;
+      if (emailLabel) emailLabel.textContent = session.user.email || '이메일 정보 없음';
+      if (headerLabel) headerLabel.textContent = `${session.user.name} 님`;
+      input.value = session.user.name;
+      feedback.textContent = '이름을 저장했습니다.';
+    } catch (error) {
+      if (!current() || error.name === 'AbortError') return;
+      if (error.status === 401) await handleError(error);
+      else feedback.textContent = publicErrorMessage(error);
+    } finally {
+      saving = false;
+      if (current()) {
+        input.disabled = false;
+        button.disabled = false;
+      }
+    }
+  }, { signal: controller.signal });
 }
 
 function bindAccount() {

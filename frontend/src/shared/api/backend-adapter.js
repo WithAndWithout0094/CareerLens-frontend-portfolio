@@ -1000,6 +1000,7 @@ function makeSession(user = null, realGuest = false) {
       document_conversion: !user?.demo,
       password_reset: false,
       preparation_analysis: false,
+      profile_update: Boolean(user && !user.demo),
     },
   };
 }
@@ -1012,13 +1013,14 @@ async function backendUser(request, signal) {
 function profileUser(profile, ApiError) {
   const id = profile.user_id || profile.id;
   if (!id) error(ApiError, '로그인한 계정을 확인하지 못했습니다.', 502, 'profile_invalid');
-  const label = [profile.display_name, profile.name, profile.email].find(
+  const label = [profile.display_name, profile.name].find(
     (value) => typeof value === 'string' && value.trim(),
   );
   return {
     ...profile,
     id,
-    name: label?.trim() || '회원',
+    name: label?.trim() || '',
+    email: typeof profile.email === 'string' ? profile.email.trim() : '',
     // This value comes from the authenticated /me response, never an email list,
     // query parameter, user-editable metadata, or a client preference.
     is_admin: profile.is_admin === true || profile.role === 'admin',
@@ -1624,6 +1626,12 @@ export async function backendApi(path, options, request, ApiError) {
   if (cleanPath === '/career-roles') return { items: catalog.roles };
   if (demoSession()) return demoApi(path, options, ApiError, catalog);
 
+  if (cleanPath === '/account/profile' && method === 'PATCH') {
+    requireReportSession(ApiError);
+    const profile = await request('/me', { method, body: { name: body?.name }, signal });
+    return { user: profileUser(profile, ApiError) };
+  }
+
   if (cleanPath === '/auth/session') {
     const session = captureBackendSession();
     if (!session.token) {
@@ -1685,7 +1693,7 @@ export async function backendApi(path, options, request, ApiError) {
     const signupRequest = ownerBoundRequest(request, signal).request;
     const result = await signupRequest('/auth/signup', {
       method: 'POST',
-      body: { email: body.email, password: body.password },
+      body: { email: body.email, password: body.password, name: body.name },
       signal,
       auth: false,
     });

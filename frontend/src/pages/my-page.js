@@ -203,7 +203,7 @@ export function savedReportsList({
   `;
 }
 
-export function myPage(user, { hasCurrentReport = false, canDeleteReports = false } = {}) {
+export function myPage(user, { hasCurrentReport = false, canDeleteReports = false, canUpdateProfile = false } = {}) {
   const name = typeof user?.name === 'string' ? user.name.trim() : '';
   const email = typeof user?.email === 'string' ? user.email.trim() : '';
   return `
@@ -222,13 +222,23 @@ export function myPage(user, { hasCurrentReport = false, canDeleteReports = fals
         <section class="my-page__account" aria-labelledby="my-account-title">
           <h2 id="my-account-title">로그인 계정</h2>
           ${
-            name || email
+            user
               ? `<dl class="my-page__identity">
-                  ${name ? `<div><dt>이름</dt><dd>${e(name)}</dd></div>` : ''}
-                  ${email ? `<div><dt>이메일</dt><dd>${e(email)}</dd></div>` : ''}
+                  <div><dt>이름</dt><dd data-account-name>${e(name || '이름 미등록')}</dd></div>
+                  <div><dt>이메일</dt><dd data-account-email>${e(email || '이메일 정보 없음')}</dd></div>
                 </dl>`
               : '<p class="my-page__account-note">현재 로그인한 계정의 보고서를 확인할 수 있습니다.</p>'
           }
+          ${canUpdateProfile && user && !user.demo ? `
+            <form id="profile-name-form" class="my-page__profile-form">
+              <div class="field">
+                <label for="profile-name">표시할 이름</label>
+                <input id="profile-name" name="name" autocomplete="name" maxlength="80" required value="${e(name)}" aria-describedby="profile-name-help profile-name-status" />
+              </div>
+              <button class="button secondary" type="submit">이름 저장</button>
+              <p id="profile-name-help" class="my-page__account-note">가입할 때 이름이 저장되지 않았다면 여기에서 등록해 주세요. 이름은 1~80자로 입력할 수 있습니다.</p>
+              <p id="profile-name-status" role="status" aria-live="polite"></p>
+            </form>` : ''}
         </section>
         <section id="saved-reports" class="saved-reports" aria-labelledby="saved-reports-title">
           <div class="saved-reports__heading">

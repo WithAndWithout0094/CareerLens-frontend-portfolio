@@ -11,8 +11,8 @@ const savedReport = {
 test('my page renders only supplied account fields and preserves the saved-list contract', () => {
   const markup = myPage({ name: '홍길동', email: 'member@example.com' });
   assert.match(markup, /<h1>마이페이지<\/h1>/);
-  assert.match(markup, /<dt>이름<\/dt><dd>홍길동<\/dd>/);
-  assert.match(markup, /<dt>이메일<\/dt><dd>member@example.com<\/dd>/);
+  assert.match(markup, /<dt>이름<\/dt><dd data-account-name>홍길동<\/dd>/);
+  assert.match(markup, /<dt>이메일<\/dt><dd data-account-email>member@example.com<\/dd>/);
   assert.match(markup, /href="#\/resume"/);
   assert.match(markup, /id="saved-reports"[^>]+aria-labelledby="saved-reports-title"/);
   assert.match(markup, /<h2 id="saved-reports-title">저장한 분석 보고서<\/h2>/);
@@ -23,8 +23,20 @@ test('my page renders only supplied account fields and preserves the saved-list 
   assert.match(myPage({}, { hasCurrentReport: true }), /href="#\/result"/);
 
   const sparse = myPage({ email: 'member@example.com' });
-  assert.doesNotMatch(sparse, /<dt>이름<\/dt>/);
+  assert.match(sparse, /<dt>이름<\/dt><dd data-account-name>이름 미등록<\/dd>/);
   assert.doesNotMatch(myPage(null), /<dt>(이름|이메일)<\/dt>/);
+});
+
+test('only supported real accounts can enter their missing name, with an escaped initial value', () => {
+  const page = myPage({ id: 'member', email: 'fixture@example.test' }, { canUpdateProfile: true });
+  assert.match(page, /id="profile-name-form"/);
+  assert.match(page, /id="profile-name"[^>]*maxlength="80"[^>]*required/);
+  assert.match(page, /이름이 저장되지 않았다면/);
+  assert.doesNotMatch(myPage({ id: 'member' }), /id="profile-name-form"/);
+  assert.doesNotMatch(myPage({ id: 'demo', demo: true }, { canUpdateProfile: true }), /id="profile-name-form"/);
+  const hostile = myPage({ id: 'member', name: '\"><img src=x onerror=alert(1)>' }, { canUpdateProfile: true });
+  assert.doesNotMatch(hostile, /<img/);
+  assert.match(hostile, /value="&quot;&gt;&lt;img/);
 });
 
 test('account text, errors and evaluation identifiers cannot insert HTML', () => {

@@ -52,7 +52,7 @@ async def lifespan(app):
 
 app = FastAPI(title='CareerLens Backend', version='0.1.0', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=[v.strip() for v in settings().cors_origins.split(',') if v.strip()],
-                   allow_credentials=False, allow_methods=['GET', 'POST', 'DELETE'], allow_headers=['Authorization', 'Content-Type', 'Idempotency-Key', 'Last-Event-ID'])
+                   allow_credentials=False, allow_methods=['GET', 'POST', 'PATCH', 'DELETE'], allow_headers=['Authorization', 'Content-Type', 'Idempotency-Key', 'Last-Event-ID'])
 app.include_router(router)
 
 

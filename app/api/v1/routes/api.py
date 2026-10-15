@@ -79,17 +79,44 @@ class Credentials(BaseModel):
         return value
 
 
+def normalize_profile_name(value: str) -> str:
+    value = value.strip()
+    if not value or len(value) > 80 or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError('Name must contain 1 to 80 printable characters')
+    return value
+
+
+class SignupCredentials(Credentials):
+    # Older API clients may omit a name. Never invent one from their email.
+    name: str | None = Field(default=None, max_length=80)
+
+    @field_validator('name')
+    @classmethod
+    def normalize_name(cls, value: str | None) -> str | None:
+        return normalize_profile_name(value) if value is not None else None
+
+
+class ProfileUpdate(BaseModel):
+    model_config = {'extra': 'forbid'}
+    name: str = Field(min_length=1, max_length=80)
+
+    @field_validator('name')
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        return normalize_profile_name(value)
+
+
 class EvaluationRequest(BaseModel):
     resume_id: UUID
     job_posting_id: UUID
 
 
 @router.post('/auth/signup', status_code=201, tags=['auth'])
-async def signup(body: Credentials, request: Request):
+async def signup(body: SignupCredentials, request: Request):
     db, _, _ = services(request)
     try:
         hashed = await asyncio.to_thread(password_hasher.hash, body.password.get_secret_value())
-        account = await db.create_account(body.email, hashed)
+        account = await db.create_account(body.email, hashed, display_name=body.name)
     except DatabaseError as error:
         if error.status == 409: raise HTTPException(409, '이미 등록된 이메일입니다.') from None
         raise
@@ -153,13 +180,30 @@ async def refresh(body: RefreshToken, request: Request):
             'expires_in': config.access_token_seconds, 'token_type': 'bearer'}
 
 
-@router.get('/me', tags=['auth'])
-async def me(request: Request, uid: str = Depends(user)):
+async def account_profile(request: Request, uid: str):
     db, _, config = services(request)
-    profiles = await db.select('profiles', user_id=f'eq.{uid}', limit=1)
-    if not profiles:
+    profiles = await db.select('profiles', select='user_id,display_name', user_id=f'eq.{uid}', limit=1)
+    accounts = await db.select('app_users', select='id,email', id=f'eq.{uid}', limit=1)
+    if not profiles or not accounts:
         raise HTTPException(401, '계정을 찾을 수 없습니다.')
-    return {**profiles[0], 'is_admin': is_admin(config, uid)}
+    # Explicit fields only: credentials and unrelated profile metadata never leave this route.
+    return {'user_id': uid, 'display_name': profiles[0].get('display_name'),
+            'email': accounts[0]['email'], 'is_admin': is_admin(config, uid)}
+
+
+@router.get('/me', tags=['auth'])
+async def me(request: Request, response: Response, uid: str = Depends(user)):
+    response.headers['Cache-Control'] = 'no-store'
+    return await account_profile(request, uid)
+
+
+@router.patch('/me', tags=['auth'])
+async def update_profile(body: ProfileUpdate, request: Request, response: Response, uid: str = Depends(user)):
+    response.headers['Cache-Control'] = 'no-store'
+    db, _, _ = services(request)
+    await account_profile(request, uid)
+    await db.update('profiles', {'display_name': body.name}, user_id=f'eq.{uid}')
+    return await account_profile(request, uid)
 
 
 @router.get('/admin/evaluation-performance', tags=['admin'])

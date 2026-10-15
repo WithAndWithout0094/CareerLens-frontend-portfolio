@@ -405,14 +405,17 @@ class DB:
         result = rows[0]['result'] if rows else None
         return result if name == 'get_evaluation_performance' else rows
 
-    async def create_account(self, email: str, password_hash: str):
+    async def create_account(self, email: str, password_hash: str, display_name: str | None = None):
         try:
             async with self.pool.connection() as conn:
                 row = await (await conn.execute(
                     'INSERT INTO public.app_users (email, password_hash) VALUES (%s, %s) RETURNING id, email',
                     (email, password_hash),
                 )).fetchone()
-                await conn.execute('INSERT INTO public.profiles (user_id) VALUES (%s)', (row['id'],))
+                await conn.execute(
+                    'INSERT INTO public.profiles (user_id, display_name) VALUES (%s, %s)',
+                    (row['id'], display_name),
+                )
                 return row
         except UniqueViolation:
             raise DatabaseError(409) from None

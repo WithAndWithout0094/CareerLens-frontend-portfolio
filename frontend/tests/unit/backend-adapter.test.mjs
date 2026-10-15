@@ -1175,7 +1175,7 @@ test('Supabase profile user_id scopes member sessions and saved workspace state'
   assert.equal(sessionStorage.getItem('careerlens.backend.workspace:undefined'), null);
 });
 
-test('a minimal authenticated profile uses a readable member label and keeps available email', async () => {
+test('a minimal authenticated profile preserves missing name and keeps email separate', async () => {
   sessionStorage.setItem('careerlens.backend.access-token', 'fixture');
   let profile = { user_id: 'member-1' };
   const request = async (path) => {
@@ -1183,15 +1183,52 @@ test('a minimal authenticated profile uses a readable member label and keeps ava
     return profile;
   };
   const minimal = await backendApi('/auth/session', {}, request, ApiError);
-  assert.deepEqual(minimal.user, { id: 'member-1', email: '', name: '회원', is_admin: false });
+  assert.deepEqual(minimal.user, { id: 'member-1', email: '', name: '', is_admin: false });
   profile = { user_id: 'member-1', display_name: '  ', email: 'person@example.test' };
   const withEmail = await backendApi('/auth/session', {}, request, ApiError);
   assert.deepEqual(withEmail.user, {
     id: 'member-1',
     email: 'person@example.test',
-    name: 'person@example.test',
+    name: '',
     is_admin: false,
   });
+});
+
+test('registration carries the entered name to the real backend signup contract', async () => {
+  let sent;
+  await backendApi('/auth/register', { method: 'POST', body: {
+    name: '가입 이름', email: 'fixture@example.test', password: 'test-password',
+  } }, async (path, options) => {
+    assert.equal(path, '/auth/signup');
+    sent = options.body;
+    return { user_id: 'new-member', access_token: 'new-token' };
+  }, ApiError);
+  assert.deepEqual(sent, { name: '가입 이름', email: 'fixture@example.test', password: 'test-password' });
+});
+
+test('profile update uses the authenticated own endpoint and returns server-confirmed identity', async () => {
+  sessionStorage.setItem('careerlens.backend.access-token', 'fixture');
+  const result = await backendApi('/account/profile', { method: 'PATCH', body: {
+    name: '새 이름', user_id: 'someone-else', email: 'injected@example.test',
+  } }, async (path, options) => {
+    assert.equal(path, '/me');
+    assert.equal(options.method, 'PATCH');
+    assert.deepEqual(options.body, { name: '새 이름' });
+    return { user_id: 'member-1', display_name: '새 이름', email: 'own@example.test' };
+  }, ApiError);
+  assert.equal(result.user.id, 'member-1');
+  assert.equal(result.user.name, '새 이름');
+  assert.equal(result.user.email, 'own@example.test');
+});
+
+test('a delayed profile save cannot replace a switched account', async () => {
+  sessionStorage.setItem('careerlens.backend.access-token', 'owner-a');
+  let release;
+  const pending = backendApi('/account/profile', { method: 'PATCH', body: { name: 'Owner A' } },
+    () => new Promise(resolve => { release = resolve; }), ApiError);
+  storeBackendCredentials({ access_token: 'owner-b' });
+  release({ user_id: 'owner-a', display_name: 'Owner A', email: 'a@example.test' });
+  await assert.rejects(pending, { name: 'AbortError' });
 });
 
 const adminProfiles = [

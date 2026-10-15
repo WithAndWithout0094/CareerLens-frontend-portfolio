@@ -186,10 +186,12 @@ export function renderPostingPhases(active = 'role') {
 }
 
 function renderAccountMenu(user) {
+  const name = typeof user?.name === 'string' ? user.name.trim() : '';
+  const email = typeof user?.email === 'string' ? user.email.trim() : '';
   return user
     ? `
         ${user.demo ? '<span class="badge">시연 계정</span>' : ''}
-        <span class="account-name">${escapeHtml(user.name)} 님</span>
+        <span class="account-name">${escapeHtml(name ? `${name} 님` : email || '로그인한 회원')}</span>
         <a class="button secondary compact" href="#/mypage">마이페이지</a>
         <button
           type="button"
