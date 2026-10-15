@@ -5,11 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>이용 흐름 독립 검수 화면</title>
   <link rel="stylesheet" href="../../src/shared/styles/activity-flow.css">
+  <style>
+    /* Optional review case: reserve a Windows-style non-overlay gutter. */
+    html.flow-review-classic-scrollbar { overflow-y: scroll; scrollbar-gutter: stable; }
+    html.flow-review-classic-scrollbar::-webkit-scrollbar { width: 23px; }
+    html.flow-review-classic-scrollbar::-webkit-scrollbar-thumb { background: #7d8da5; }
+  </style>
 </head>
 <body>
   <div id="flow-review"></div>
   <script type="module">
     import { mountFlowViewer } from '../../src/features/activity-flow/viewer.js';
+    if (new URLSearchParams(location.search).has('classicScrollbar')) document.documentElement.classList.add('flow-review-classic-scrollbar');
     // This local review entry uses fictional playback only. No server request
     // callback, user session, analysis request, or external model is supplied.
     const dispose = mountFlowViewer(document.querySelector('#flow-review'), { central: false, paired: false });

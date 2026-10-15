@@ -338,7 +338,9 @@
 .flow-extra > summary { margin-bottom: 12px; }
 .flow-overview + .flow-global-panel { margin-top: 0; }
 
-.flow-explorer { --explorer-fg: #eaf1ff; color: var(--explorer-fg); width: min(1340px, calc(100vw - 48px)); max-width: none; height: min(880px, calc(100dvh - 48px)); max-height: none; padding: 0; margin: auto; border: 1px solid var(--flow-border); border-radius: 14px; background: var(--flow-panel); overflow: hidden; }
+/* Percent width uses the available layout viewport, excluding a classic root
+   scrollbar. vw would include that gutter and clip the right edge on Windows. */
+.flow-explorer { --explorer-fg: #eaf1ff; color: var(--explorer-fg); position: fixed; inset: 0; box-sizing: border-box; width: min(1340px, calc(100% - 48px)); max-width: 100%; height: min(880px, calc(100dvh - 48px)); max-height: none; padding: 0; margin: auto; border: 1px solid var(--flow-border); border-radius: 14px; background: var(--flow-panel); overflow: hidden; }
 .flow-explorer::backdrop { background: rgb(3 8 16 / .76); }
 .flow-explorer[open] { display: flex; flex-direction: column; }
 .flow-explorer button, .flow-explorer input, .flow-explorer select { font: inherit; color: inherit; }
@@ -425,7 +427,7 @@
 @media (max-width: 1200px) { .flow-overview-stages { grid-template-columns: repeat(4, minmax(0, 1fr)); } .flow-overview-card { min-height: 185px; } }
 @media (max-width: 850px) {
   .flow-overview > header { align-items: start; flex-direction: column; gap: 14px; }
-  .flow-explorer { width: calc(100vw - 20px); height: calc(100dvh - 20px); }
+  .flow-explorer { width: calc(100% - 20px); height: calc(100dvh - 20px); }
   .flow-explorer-layout { grid-template-columns: 205px minmax(0, 1fr); }
   .flow-explorer-header { padding: 18px; gap: 12px; } .flow-explorer-header h2 { font-size: 20px; }
   .flow-explorer-main { padding: 18px; } .flow-explorer-nodes { grid-template-columns: 1fr; }
@@ -435,7 +437,7 @@
   .flow-overview-stages { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .flow-overview-card { min-height: 195px; padding: 14px 12px; gap: 9px; }
   .flow-overview-card > strong { font-size: 15px; }
-  .flow-explorer { width: 100vw; height: 100dvh; border-radius: 0; border: 0; }
+  .flow-explorer { width: 100%; height: 100dvh; margin: 0; border-radius: 0; border: 0; }
   .flow-explorer-header h2 { font-size: 18px; } .flow-explorer-header p { font-size: 11px; }
   .flow-explorer-header > button { padding-inline: 11px; }
   .flow-explorer-breadcrumb { padding: 8px 14px; gap: 10px; }
