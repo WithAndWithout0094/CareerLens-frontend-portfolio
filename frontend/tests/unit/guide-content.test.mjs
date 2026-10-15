@@ -57,17 +57,21 @@ test('guest reports point to the actual login gate rather than hidden score and 
 });
 
 test('flow describes the actual standalone header and never invents a login or logout control', () => {
+  const templates = ['viewer.js', 'explorer-dialog.js'].map(file =>
+    readFileSync(new URL(`../../src/features/activity-flow/${file}`, import.meta.url), 'utf8'));
   for (const session of [guest, member]) {
     const items = hints('flow', session);
     assert.deepEqual(items.find(item => item.id === 'brand').targets, ['.flow-brand']);
     assert.deepEqual(items.find(item => item.id === 'account').targets, ['.flow-app-link']);
     assert.ok(!items.some(item => item.id === 'login' || item.id === 'public-dashboard'));
     assert.doesNotMatch(items.map(item => item.text).join(' '), /로그인 버튼|로그아웃/);
-    const viewer = readFileSync(new URL('../../src/features/activity-flow/viewer.js', import.meta.url), 'utf8');
     for (const item of items.filter(item => item.id.startsWith('flow-'))) {
       for (const target of item.targets) {
-        if (target.startsWith('[')) assert.ok(viewer.includes(target.slice(1, -1)), target);
-        else assert.ok(viewer.includes(target.slice(1)), target);
+        if (target.startsWith('[')) assert.ok(templates.some(source => source.includes(target.slice(1, -1))), target);
+        else if (target.endsWith(' > summary')) {
+          const className = target.slice(1, -' > summary'.length);
+          assert.ok(templates.some(source => source.includes(`<details class="${className}"><summary>`)), target);
+        } else assert.ok(templates.some(source => source.includes(target.slice(1))), target);
       }
     }
   }
