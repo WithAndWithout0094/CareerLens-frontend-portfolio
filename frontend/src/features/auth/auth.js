@@ -1,4 +1,5 @@
 import { api, getSession, setSession } from '../../shared/api/client.js';
+import { validatedProfileName } from './profile-name.js';
 import { publicErrorMessage } from '../../shared/api/error-messages.js';
 import { beginFlowEvent, finishFlowEvent, recordFlowEvent } from '../activity-flow/events.js';
 import {
@@ -359,6 +360,17 @@ export function bindAuth({ onSession, resetToken, navigate, demo = false }) {
     event.preventDefault();
     const action = form.dataset.action;
     const body = Object.fromEntries(new FormData(form));
+    if (action === 'register') {
+      const name = validatedProfileName(body.name);
+      if (name === null) {
+        recordFlowEvent('input_check', { state: 'blocked', source });
+        notice('이름은 공백만 입력할 수 없으며, 줄바꿈 없이 1~80자로 입력해 주세요.',
+          'error', document.getElementById('auth-notices'));
+        document.getElementById('auth-name')?.focus();
+        return;
+      }
+      body.name = name;
+    }
     if (action === 'reset-password') body.token = resetToken;
     await pending(form, '처리하는 중…', async () => {
       recordFlowEvent('input_check', { source });

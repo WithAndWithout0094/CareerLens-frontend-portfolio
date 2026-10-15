@@ -75,7 +75,7 @@ for (const action of ['login', 'register']) {
         close() { this.closed = true; }
       };
       globalThis.FormData = class {
-        *[Symbol.iterator]() { yield ['email', 'PRIVATE_EMAIL@example.test']; yield ['password', 'PRIVATE_PASSWORD']; }
+        *[Symbol.iterator]() { yield ['email', 'PRIVATE_EMAIL@example.test']; yield ['password', 'PRIVATE_PASSWORD']; yield ['name', 'PRIVATE_NAME']; }
       };
       globalThis.fetch = async (url) => {
         requests.push(url);

@@ -80,9 +80,18 @@ class Credentials(BaseModel):
 
 
 def normalize_profile_name(value: str) -> str:
-    value = value.strip()
-    if not value or len(value) > 80 or any(ord(char) < 32 or ord(char) == 127 for char in value):
-        raise ValueError('Name must contain 1 to 80 printable characters')
+    if not isinstance(value, str):
+        raise ValueError('Name must be text')
+    # Match JavaScript String.trim(), not Python's broader whitespace set.
+    whitespace = '\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'
+    value = value.strip(whitespace)
+    # HTML maxlength and JavaScript length both count UTF-16 code units.
+    length = sum(2 if ord(char) > 0xffff else 1 for char in value)
+    if not value or length > 80 or any(
+        ord(char) < 32 or ord(char) == 127 or 0xd800 <= ord(char) <= 0xdfff
+        or char in '\u2028\u2029' for char in value
+    ):
+        raise ValueError('Name must contain 1 to 80 UTF-16 code units without control characters')
     return value
 
 
@@ -90,7 +99,7 @@ class SignupCredentials(Credentials):
     # Older API clients may omit a name. Never invent one from their email.
     name: str | None = Field(default=None, max_length=80)
 
-    @field_validator('name')
+    @field_validator('name', mode='before')
     @classmethod
     def normalize_name(cls, value: str | None) -> str | None:
         return normalize_profile_name(value) if value is not None else None
@@ -100,7 +109,7 @@ class ProfileUpdate(BaseModel):
     model_config = {'extra': 'forbid'}
     name: str = Field(min_length=1, max_length=80)
 
-    @field_validator('name')
+    @field_validator('name', mode='before')
     @classmethod
     def normalize_name(cls, value: str) -> str:
         return normalize_profile_name(value)

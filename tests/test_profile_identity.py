@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from app.api.v1.routes.api import router
+from app.api.v1.routes.api import router, ProfileUpdate, SignupCredentials
 
 
 PROFILE_FIELDS = {'user_id', 'display_name', 'email', 'is_admin'}
@@ -182,7 +182,8 @@ def test_patch_name_is_persisted_for_authenticated_account_only(profile_api):
     assert reopened.json() == response.json()
 
 
-@pytest.mark.parametrize('name', ['', '   ', '가' * 81, '이\x00름', '이\n름', '이\x7f름', 12, {}])
+@pytest.mark.parametrize('name', ['', '   ', '가' * 81, '\U00020000' * 41, '\ufeff',
+                                 '이\x00름', '이\n름', '이\x7f름', '이\u2028름', 12, {}])
 def test_signup_rejects_invalid_names_without_creating_account(profile_api, name):
     response = profile_api.client.post('/api/v1/auth/signup', json={
         'email': 'new@example.test', 'password': 'test-only-password', 'name': name,
@@ -194,6 +195,7 @@ def test_signup_rejects_invalid_names_without_creating_account(profile_api, name
 
 @pytest.mark.parametrize('body', [
     {}, {'name': None}, {'name': ''}, {'name': '   '}, {'name': '가' * 81},
+    {'name': '\U00020000' * 41}, {'name': '\ufeff'}, {'name': '이\u2028름'},
     {'name': '이\x00름'}, {'name': '이\n름'}, {'name': '이\x7f름'},
     {'name': 12}, {'name': {}},
 ])
@@ -205,6 +207,29 @@ def test_patch_rejects_missing_or_invalid_name_without_changing_profile(profile_
     assert response.status_code == 422
     assert profile_api.database.profiles[own]['display_name'] == '기존 이름'
     assert profile_api.database.writes == []
+
+
+@pytest.mark.parametrize(('entered', 'normalized'), [
+    ('a' * 80, 'a' * 80),
+    ('\U00020000' * 40, '\U00020000' * 40),
+    (' \ufeff이름\u3000', '이름'),
+    ('\n이름\n', '이름'),
+    (' ' + 'a' * 80 + ' ', 'a' * 80),
+    ('\u0085', '\u0085'),
+])
+def test_signup_and_update_share_browser_unicode_normalization(entered, normalized):
+    # The browser's existing maxlength=80 counts UTF-16 units, not code points.
+    assert ProfileUpdate(name=entered).name == normalized
+    assert SignupCredentials(email='fixture@example.test', password='fixture-password', name=entered).name == normalized
+
+
+@pytest.mark.parametrize('name', ['\U00020000' * 40 + 'a', '\ufeff', '\u001c', '\ud800', '이\u2029름'])
+def test_signup_and_update_reject_the_same_unicode_boundaries_as_the_browser(name):
+    for model, other in [(ProfileUpdate, {}), (SignupCredentials, {
+        'email': 'fixture@example.test', 'password': 'fixture-password',
+    })]:
+        with pytest.raises(ValueError):
+            model(name=name, **other)
 
 
 @pytest.mark.parametrize('extra', ['user_id', 'id', 'email', 'display_name', 'is_admin', 'password_hash'])

@@ -2,6 +2,7 @@ import { api, getSession, setSession, completeAuthCallback } from '../shared/api
 import { publicErrorMessage } from '../shared/api/error-messages.js';
 import { shell, notice, pending, bindCounters, escapeHtml } from '../shared/components/ui.js';
 import { renderAuth, bindAuth } from '../features/auth/auth.js';
+import { validatedProfileName } from '../features/auth/profile-name.js';
 import { consumeAuthCallback, parseAuthCallback } from '../features/auth/auth-callback.js';
 import { workspacePage } from '../pages/workspace.js';
 import { myPage, savedReportsList, filterSavedReports } from '../pages/my-page.js';
@@ -1392,8 +1393,8 @@ function bindProfileName() {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (saving || !current()) return;
-    const name = input.value.trim();
-    if (!name || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name)) {
+    const name = validatedProfileName(input.value);
+    if (name === null) {
       feedback.textContent = '이름은 공백만 입력할 수 없으며, 줄바꿈 없이 1~80자로 입력해 주세요.';
       input.focus();
       return;

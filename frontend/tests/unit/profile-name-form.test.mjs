@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { shell } from '../../src/shared/components/ui.js';
+import { validatedProfileName } from '../../src/features/auth/profile-name.js';
 
 const controller = readFileSync(new URL('../../src/app/main.js', import.meta.url), 'utf8');
 const bindSource = controller.slice(controller.indexOf('function bindProfileName()'), controller.indexOf('function bindAccount()'));
@@ -20,7 +21,7 @@ function fixture(request) {
   const labels = new Map(['[data-account-name]', '[data-account-email]', '.account-name'].map(key => [key, { textContent: 'before' }]));
   const calls = [];
   const context = vm.createContext({
-    AbortController,
+    AbortController, validatedProfileName,
     document: { getElementById: id => elements.get(id), querySelector: selector => labels.get(selector) },
     api: async (path, options) => { calls.push({ path, options }); return request(path, options); },
     publicErrorMessage: () => '저장하지 못했습니다.',
@@ -61,7 +62,7 @@ test('saving a name displays only confirmed values in the header and account fie
 });
 
 test('blank, overlong and multiline names are not submitted', async () => {
-  for (const name of ['  ', '가'.repeat(81), '이름\n다음줄']) {
+  for (const name of ['  ', '가'.repeat(81), '이름\n다음줄', '\u{20000}'.repeat(41), '\ufeff', '이\u2028름', '\ud800']) {
     const view = fixture(() => { throw new Error('must not send'); });
     view.input.value = name;
     await view.submit();
@@ -69,6 +70,15 @@ test('blank, overlong and multiline names are not submitted', async () => {
     assert.equal(view.input.focused, true);
     assert.match(view.feedback.textContent, /1~80/);
   }
+});
+
+test('name normalization matches the HTML UTF-16 boundary and trims Unicode whitespace', () => {
+  for (const name of ['a'.repeat(80), '\u{20000}'.repeat(40), '이 름', '\u0085'])
+    assert.equal(validatedProfileName(name), name);
+  for (const name of [' \ufeff이름\u3000', '\n이름\n', ` ${'a'.repeat(80)} `])
+    assert.equal(validatedProfileName(name), name.trim());
+  for (const name of ['\u{20000}'.repeat(40) + 'a', '\u001c', '이\u2029름', 12, {}, null])
+    assert.equal(validatedProfileName(name), null);
 });
 
 test('duplicate submit is disabled until the single save finishes', async () => {

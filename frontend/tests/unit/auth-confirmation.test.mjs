@@ -57,11 +57,13 @@ for (const failed of [false, true]) {
         *[Symbol.iterator]() {
           yield ['email', 'synthetic@example.test'];
           yield ['password', 'fixture-password'];
+          yield ['name', '\ufeff  가입 이름  \u3000'];
         }
       };
-      globalThis.fetch = async (url) => {
+      globalThis.fetch = async (url, options) => {
         requests += 1;
         assert.equal(url, '/api/v1/auth/register');
+        assert.equal(JSON.parse(options.body).name, '가입 이름');
         return failed
           ? Response.json({ detail: 'User already registered' }, { status: 409 })
           : Response.json({ access_token: null, email_confirmation_required: true });
@@ -93,3 +95,36 @@ for (const failed of [false, true]) {
     }
   });
 }
+
+test('signup rejects the same Unicode blank and length cases before sending credentials', async () => {
+  const original = Object.fromEntries(['document', 'fetch', 'FormData'].map(key => [key, globalThis[key]]));
+  try {
+    for (const name of ['\ufeff', '\u{20000}'.repeat(41), '이\u2028름', '\ud800']) {
+      let submit;
+      let requests = 0;
+      let focused = false;
+      const messages = [];
+      const form = { dataset: { action: 'register' }, addEventListener(type, handler) { if (type === 'submit') submit = handler; } };
+      globalThis.document = {
+        querySelectorAll: () => [],
+        getElementById: id => id === 'auth-form' ? form
+          : id === 'auth-name' ? { focus() { focused = true; } }
+            : id === 'auth-notices' ? { replaceChildren(node) { messages.push(node.textContent); } } : null,
+        createElement: () => ({ setAttribute() {}, scrollIntoView() {} }),
+      };
+      globalThis.FormData = class {
+        *[Symbol.iterator]() { yield ['name', name]; yield ['email', 'fixture@example.test']; yield ['password', 'fixture-password']; }
+      };
+      globalThis.fetch = async () => { requests += 1; throw new Error('invalid name must not be sent'); };
+      bindAuth({ onSession() { throw new Error('invalid name must not create session'); } });
+      await submit({ preventDefault() {} });
+      assert.equal(requests, 0);
+      assert.equal(focused, true);
+      assert.match(messages[0], /1~80/);
+    }
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
+});
