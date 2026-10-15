@@ -1,6 +1,10 @@
-import { FLOW_VIEW_COLUMNS, FLOW_VIEW_NODES, FLOW_NODES, FLOW_SOURCES, LIVE_FLOW_EDGES, normalizeFlowEvent, flowEventLabel, projectFlowNode, projectFlowEdges } from './catalog.js';
+import { FLOW_VIEW_COLUMNS, FLOW_VIEW_NODES, FLOW_NODES, FLOW_SOURCES, normalizeFlowEvent, flowEventLabel, projectFlowNode, projectFlowEdges } from './catalog.js';
 import { DEMO_ACTIONS, DEMO_GROUPS, getDemoAction, createDemoPlayback } from './demo.js';
 import { mountFlowMotion } from './motion.js';
+import { observationEdges } from './explorer-model.js';
+import { overviewMarkup, updateOverview, mountFlowExplorer } from './explorer-dialog.js';
+
+const LIVE_FLOW_EDGES = observationEdges();
 import { FLOW_RUN_NODES } from './events.js';
 import { createLiveFlowSources } from './live-sources.js';
 import { createAdminFlowMonitor as createCentralFlowMonitor } from './admin-transport.js';
@@ -44,6 +48,7 @@ function pageMarkup(hasStream, central) {
       <div class="flow-connection"><span class="flow-status-dot"></span><strong data-flow-connection></strong><span data-flow-scope></span></div>
     </section>
     <div class="flow-mode-banner" data-flow-banner role="status"></div>
+    ${overviewMarkup()}
     <section class="flow-global-panel" data-flow-global hidden aria-label="전체 이용 실시간 기록">
       <header><div><h2>전체 이용 기록</h2><p data-flow-global-summary></p></div><span data-flow-global-health role="status"></span></header>
       <p class="flow-panel-note">모든 관찰 대상의 새 이벤트가 이 목록에 표시됩니다. 항목을 선택하면 아래 지도에 해당 브라우저 또는 분석만 표시합니다. 계정·이력서·보고서 원문은 전송하지 않습니다.</p>
@@ -56,14 +61,15 @@ function pageMarkup(hasStream, central) {
       <div><strong>인증 완료 → 저장된 결과 연결 → 현재 보고서 표시</strong><p>재분석 없이 결과를 엽니다. 회원의 기존 분석은 FastAPI·워커 경로로 구분합니다.</p></div>
       <p class="flow-live-guide-note">전체 이용 기록과 선택한 대상의 지도를 구분해서 봅니다. 대상별 인증·분석 기록은 섞지 않으며, 연결선은 처리 관계이고 실행 증거는 아닙니다. 브라우저 관측과 서버가 기록한 분석은 별도 대상으로 표시합니다.</p>
     </section>
-    <section class="flow-simulator" data-flow-simulator aria-label="가상 기능 시연">
+    <details class="flow-simulator flow-extra" data-flow-simulator aria-label="가상 기능 시연"><summary>전체 기능의 경우별 시연 펼치기</summary>
       <div class="flow-simulator-heading"><div><h2>경우를 골라 흐름을 시연하세요</h2><p>성공·실패·취소와 저장 위치까지, ${DEMO_ACTIONS.length}가지 경우를 가상으로 재현합니다.</p></div><button class="flow-demo-all" data-flow-action="full">${glyph('play')}전체 성공 흐름</button></div>
       <div class="flow-case-tools"><div class="flow-case-groups" role="group" aria-label="시연 기능 분류">${[{id:'all',label:'전체'}, ...DEMO_GROUPS].map((group) => `<button data-flow-group="${group.id}" aria-pressed="${group.id === 'account'}">${group.label}<span>${group.id === 'all' ? DEMO_ACTIONS.length : DEMO_ACTIONS.filter((action) => action.group === group.id).length}</span></button>`).join('')}</div><input class="flow-case-search" data-flow-search type="search" aria-label="시연 경우 검색" placeholder="경우 검색 · 가입, 취소, 저장…" maxlength="80" autocomplete="off"></div>
       <div class="flow-case-results"><span data-flow-case-count></span><span>버튼으로 재생 · 목록 안에서 스크롤</span></div>
       <div class="flow-action-list" data-flow-action-list></div>
       <div class="flow-case-brief"><h3 data-flow-case-title></h3><p data-flow-case-condition></p><p data-flow-case-route></p></div>
       <div class="flow-demo-status" role="status" aria-live="polite" aria-atomic="true"><strong data-flow-demo-state>시연 대기</strong><span data-flow-demo-message></span></div>
-    </section>
+    </details>
+    <details class="flow-ledger"><summary>수집 가능한 실시간 항목 · 상태 지도 펼치기</summary><p class="flow-panel-note">기존 29개 통합 관측 항목의 상태를 봅니다. 새 코드의 전체 기능과 하위 구성은 위 요약 카드를 선택해 확인하세요. 선은 현재 소스에서 추출한 연결이며, 이벤트가 없는 단계의 실행을 뜻하지 않습니다.</p>
     <section class="flow-map-region" aria-label="CareerLens 처리 흐름 지도">
       <div class="flow-map-toolbar"><div class="flow-legend"><span><i class="is-running"></i>진행</span><span><i class="is-complete"></i>완료</span><span><i class="is-failed"></i>실패</span><span><i class="is-uncollected"></i>미수집</span></div>
         <div class="flow-demo-controls" data-flow-demo-controls><button data-flow-play disabled>${glyph('pause')}<span>일시정지</span></button><button data-flow-restart>${glyph('reset')}<span>초기화</span></button></div>
@@ -75,11 +81,14 @@ function pageMarkup(hasStream, central) {
       </div>
       <div class="flow-map-footer"><span data-flow-latest>이벤트를 기다리고 있습니다.</span><span data-flow-card-scope>전체 ${FLOW_VIEW_NODES.size}개 · 통합 단계는 카드 선택</span></div>
     </section>
+    </details>
+    <details class="flow-instrument-details"><summary>선택한 대상의 이벤트·응답 시간·세부 기록 펼치기</summary>
     <div class="flow-instruments">
       <section class="flow-log-panel"><header><h2>이벤트 로그</h2><span><b data-flow-event-count>0</b>개 · 최근 100개</span></header><p class="flow-panel-note" data-flow-log-note></p><div class="flow-log" data-flow-log role="region" aria-label="최근 이벤트 기록" tabindex="0"></div></section>
       <section class="flow-timing-panel"><header><h2 data-flow-chart-title>API 응답 시간</h2><span data-flow-request-count>미측정</span></header><p class="flow-panel-note" data-flow-chart-note></p><div data-flow-chart class="flow-chart"></div></section>
       <section class="flow-detail-panel"><header><h2>단계 상세</h2><span data-flow-detail-state>선택 가능</span></header><div data-flow-detail></div></section>
     </div>
+    </details>
     <footer class="flow-footer"><span>CareerLens · 프로젝트 2</span><span>이 화면은 원문 입력·계정 정보·인증 토큰을 기록하지 않습니다.</span></footer>
   </div>`;
 }
@@ -97,6 +106,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
   let liveSources = makeSources();
   host.innerHTML = pageMarkup(Boolean(stream), central);
   const $ = (selector) => host.querySelector(selector);
+  const explorer = mountFlowExplorer(host);
   let mode = central || stream ? 'live' : 'demo';
   let centralState = { state: 'connecting', scope: null, sources: 0, received: 0, gaps: 0 };
   let allEvents = [], sourcePage = 0, centralLastSeen = 0, pendingPin = null;
@@ -387,6 +397,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
     return `<div class="flow-detail-timing"><h4>인증 완료 → 보고서 표시</h4><strong>${value}</strong><p>${mode === 'demo' ? '가상 예시 · ' : ''}${goal}</p><p>기존 결과를 연결해 화면에 표시한 시간입니다. 분석 시간과 별도로 측정합니다.</p></div>`;
   }
   function renderEvents() {
+    updateOverview(host, currentNodeEvent, { demo: mode === 'demo' });
     for (const [id, card] of cards) {
       const event = cardEvent(id);
       const definition = FLOW_VIEW_NODES.get(id);
@@ -689,6 +700,8 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
   } catch { /* The view still supports the clearly labelled offline demonstration. */ }
 
   function onClick(event) {
+    const explore = event.target.closest('[data-flow-explore]');
+    if (explore) { explorer.open(explore.dataset.flowExplore, explore); return; }
     const pick = event.target.closest('[data-flow-pick]');
     if (pick) { onSource({ target: { value: pick.dataset.flowPick } }); return; }
     if (event.target.closest('[data-flow-source-prev]')) { sourcePage = Math.max(0, sourcePage - 1); renderConnection(); return; }
@@ -696,7 +709,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
     const themeButton = event.target.closest('[data-flow-theme]');
     if (themeButton && host.contains(themeButton)) applyTheme(themeButton.dataset.flowTheme, true);
     const card = event.target.closest('[data-flow-node]');
-    if (card) { chosen = card.dataset.flowNode; renderDetail(); }
+    if (card) { chosen = card.dataset.flowNode; renderDetail(); explorer.open(chosen, card); }
     if (event.target.closest('[data-flow-motion]')) {
       reduceMotion = !reduceMotion;
       motion.setPaused(reduceMotion);
@@ -779,6 +792,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
     monitor?.dispose();
     channel?.close();
     motion.destroy();
+    explorer.destroy();
     host.removeEventListener('click', onClick);
     $('[data-flow-mode]')?.removeEventListener('change', onMode);
     $('[data-flow-source]')?.removeEventListener('change', onSource);

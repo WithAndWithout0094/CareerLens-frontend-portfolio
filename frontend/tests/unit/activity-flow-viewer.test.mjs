@@ -155,6 +155,12 @@ async function viewerFixture({ central = false, paired = false, request, search 
   };
   const context = vm.createContext({
     ...catalog, ...demo, FLOW_RUN_NODES, createLiveFlowSources, URLSearchParams, document,
+    // These long-lived tests isolate the observer ledger. The source-derived
+    // overview and explorer have their own graph/playback contract tests.
+    observationEdges: () => catalog.LIVE_FLOW_EDGES,
+    overviewMarkup: () => '<section data-flow-overview></section>',
+    updateOverview() {},
+    mountFlowExplorer: () => ({ open() {}, destroy() {} }),
     createCentralFlowMonitor: (hooks) => {
       centralMounts++; centralDisposed = false;
       centralHooks = hooks;

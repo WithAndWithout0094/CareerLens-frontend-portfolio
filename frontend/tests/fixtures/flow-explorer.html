@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>이용 흐름 독립 검수 화면</title>
+  <link rel="stylesheet" href="../../src/shared/styles/activity-flow.css">
+</head>
+<body>
+  <div id="flow-review"></div>
+  <script type="module">
+    import { mountFlowViewer } from '../../src/features/activity-flow/viewer.js';
+    // This local review entry uses fictional playback only. No server request
+    // callback, user session, analysis request, or external model is supplied.
+    const dispose = mountFlowViewer(document.querySelector('#flow-review'), { central: false, paired: false });
+    window.addEventListener('pagehide', dispose, { once: true });
+  </script>
+</body>
+</html>

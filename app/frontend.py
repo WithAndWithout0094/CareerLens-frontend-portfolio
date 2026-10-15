@@ -73,7 +73,12 @@ class FrontendBoundary:
 
 def mount_frontend(application):
     from frontend.server import create_app, load_local_env
+    from app.infrastructure.flow_manifest import write_manifest
 
+    # Existing Render services may retain an older dashboard build command.
+    # Regenerate before serving static files as well as in the Blueprint build.
+    # This compiles graph structure only; no evaluator, DB or API call is run.
+    write_manifest()
     load_local_env(FRONTEND_ROOT.parent / ".env")
     raw_port = os.environ.get("PORT", "8000")
     if not raw_port.isascii() or not raw_port.isdecimal() or not 1 <= int(raw_port) <= 65535:
