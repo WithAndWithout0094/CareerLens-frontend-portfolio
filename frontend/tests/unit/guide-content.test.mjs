@@ -12,6 +12,7 @@ import { opportunitiesPage, opportunityDetail } from '../../src/pages/opportunit
 import { jobListPage, jobDetailPage, postingEditorPage } from '../../src/pages/jobs.js';
 import { myPage, savedReportsList } from '../../src/pages/my-page.js';
 import { adminDashboard } from '../../src/pages/admin-dashboard.js';
+import { overviewMarkup } from '../../src/features/activity-flow/explorer-dialog.js';
 
 const guest = { user: null, backend_adapter: true };
 const member = { user: { id: 'fixture-member' }, backend_adapter: true };
@@ -57,8 +58,12 @@ test('guest reports point to the actual login gate rather than hidden score and 
 });
 
 test('flow describes the actual standalone header and never invents a login or logout control', () => {
-  const templates = ['viewer.js', 'explorer-dialog.js'].map(file =>
-    readFileSync(new URL(`../../src/features/activity-flow/${file}`, import.meta.url), 'utf8'));
+  // The overview now delegates its map markup to a separate renderer. Assert
+  // its emitted DOM contract instead of guessing which source file owns it.
+  const templates = [
+    readFileSync(new URL('../../src/features/activity-flow/viewer.js', import.meta.url), 'utf8'),
+    overviewMarkup(),
+  ];
   for (const session of [guest, member]) {
     const items = hints('flow', session);
     assert.deepEqual(items.find(item => item.id === 'brand').targets, ['.flow-brand']);
@@ -117,6 +122,7 @@ test('critical feature anchors are emitted by the actual templates used for thei
     ['jobs/fixture', member, jobDetailPage(posting, member.user, new URLSearchParams()), 'result-confirm', 'id="select-posting"'],
     ['mypage', member, myPage(member.user), 'identity', 'class="my-page__account"'],
     ['admin', guest, adminDashboard(), 'execution-reports', 'data-execution-load'],
+    ['flow', guest, overviewMarkup(), 'flow-map', 'data-overview-map'],
     ['email', guest, renderAuth('email', guest), 'auth-email', 'id="auth-email"'],
   ];
   for (const [route, session, markup, hintId, marker] of cases) {
