@@ -132,6 +132,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
   let cardFlashTimer = 0;
   const renderedCards = new Map();
   let reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.body.dataset.flowMotionPaused = String(reduceMotion);
   const motion = mountFlowMotion($('[data-flow-board]'), { reducedMotion: reduceMotion, theme });
   const cards = new Map([...host.querySelectorAll('[data-flow-node]')].map((node) => [node.dataset.flowNode, node]));
   const playback = createDemoPlayback({ emit: (event) => {
@@ -713,6 +714,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
     if (event.target.closest('[data-flow-motion]')) {
       reduceMotion = !reduceMotion;
       motion.setPaused(reduceMotion);
+      document.body.dataset.flowMotionPaused = String(reduceMotion);
       $('[data-flow-motion]').setAttribute('aria-pressed', String(reduceMotion));
       $('[data-flow-motion]').setAttribute('aria-label', reduceMotion ? '빛의 움직임 켜기' : '동작 줄이기');
     }
@@ -793,6 +795,7 @@ export function mountFlowViewer(host, { central = false, paired = true, onUnauth
     channel?.close();
     motion.destroy();
     explorer.destroy();
+    delete document.body.dataset.flowMotionPaused;
     host.removeEventListener('click', onClick);
     $('[data-flow-mode]')?.removeEventListener('change', onMode);
     $('[data-flow-source]')?.removeEventListener('change', onSource);

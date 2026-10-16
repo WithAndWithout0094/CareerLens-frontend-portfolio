@@ -1,6 +1,7 @@
 import { FLOW_GRAPH, summaryObservation, overviewConnections, analysisDomains } from './explorer-model.js';
 import { makeNodeDemo, createExplorerPlayback } from './explorer-demo.js';
 import { flowEventLabel } from './catalog.js';
+import { buildExplorerMap, explorerMapMarkup, mountExplorerMap, mountMapVisibility, mountOverviewWires, MAP_CARD } from './explorer-map.js';
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const arrow = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 10h14m-5-5 5 5-5 5"/></svg>';
@@ -10,6 +11,7 @@ export function overviewMarkup(graph = FLOW_GRAPH) {
   return `<section class="flow-overview" aria-label="서비스 흐름 요약" data-flow-overview>
     <header><div><h2>처음부터 결과까지, 흐름을 펼쳐보세요</h2><p data-overview-state-copy>카드를 선택하면 연결된 단계와 기능별 시연이 열립니다. 아래 상태는 선택한 관찰 대상의 실제 기록입니다.</p></div><button type="button" data-flow-explore="overview:analysis">분석 구조 살펴보기 ${arrow}</button></header>
     <div class="flow-overview-stages">${graph.overview.map((group, index) => `<button type="button" class="flow-overview-card" data-flow-explore="${esc(group.id)}" data-summary-node="${esc(group.id)}" aria-haspopup="dialog"><span class="flow-overview-order">${String(index + 1).padStart(2, '0')}</span><strong>${esc(group.label)}</strong><span>${esc(group.description)}</span><span class="flow-overview-state" data-summary-status>수집된 기록 없음</span><span class="flow-overview-open">세부 흐름 · 시연 ${arrow}</span></button>`).join('')}</div>
+    <p class="flow-overview-motion-note">빛은 코드 연결 방향을 안내합니다. 실제 이용 상태는 각 카드의 기록과 구분됩니다.</p>
     <details class="flow-overview-relations"><summary>요약 단계의 코드 연결 관계 보기</summary><ul>${overviewConnections(graph).map(([from, to]) => `<li><button type="button" data-flow-explore="${esc(from)}">${esc(graph.node(from).label)}</button>${arrow}<button type="button" data-flow-explore="${esc(to)}">${esc(graph.node(to).label)}</button></li>`).join('')}</ul><p>번호는 탐색 순서입니다. 실제 호출·분기 관계는 위 목록과 각 카드의 세부 흐름을 기준으로 합니다.</p></details>
     <p class="flow-source-version">코드에서 생성한 기능 ${graph.nodes.size}개 · 연결 ${graph.edges.length}개 · 소스 ${esc(graph.manifest.sourceDigest?.slice(0, 10) || '확인 불가')} <span>코드 변경 후 빌드할 때 갱신됩니다.</span></p>
   </section>`;
@@ -38,6 +40,10 @@ export function mountFlowExplorer(host, { graph = FLOW_GRAPH } = {}) {
   host.querySelector('.flow-shell').append(dialog);
   let history = [], trigger = null, tab = 'flow', scenario = 'success', search = '', disposed = false;
   let currentDemo = null;
+  let mapController = null, expanded = false;
+  const views = new Map(), scrollPositions = new Map();
+  const disposeOverview = mountOverviewWires(host, graph);
+  const disposeVisibility = mountMapVisibility(dialog);
   const playback = createExplorerPlayback({ schedule: (fn, ms) => win.setTimeout(fn, ms), cancel: (id) => win.clearTimeout(id), onChange: renderDemoState });
   const selected = () => history.at(-1);
   const nodeButton = (id, small = false) => {
@@ -45,7 +51,7 @@ export function mountFlowExplorer(host, { graph = FLOW_GRAPH } = {}) {
     if (!node) return '';
     return `<button type="button" class="${small ? 'flow-explorer-link' : 'flow-explorer-node'}" data-explore-node="${esc(id)}" ${id === selected() ? 'aria-current="step"' : ''}><strong>${esc(node.label)}</strong>${small ? '' : `<span>${esc(node.description || node.kind || '코드에서 확인된 기능')}</span>`}${arrow}</button>`;
   };
-  function group(title, ids, { collapsed = false, empty = '연결된 단계가 없습니다.' } = {}) {
+  function group(title, ids, { collapsed = true, empty = '연결된 단계가 없습니다.' } = {}) {
     const body = ids.length ? `<div class="flow-explorer-nodes">${ids.map((id) => nodeButton(id)).join('')}</div>` : `<p class="flow-explorer-empty">${empty}</p>`;
     return collapsed ? `<details class="flow-explorer-group"><summary>${title} <span>${ids.length}개</span></summary>${body}</details>`
       : `<section class="flow-explorer-group"><h3>${title} <span>${ids.length}개</span></h3>${body}</section>`;
@@ -76,14 +82,12 @@ export function mountFlowExplorer(host, { graph = FLOW_GRAPH } = {}) {
   }
   function demoMarkup() {
     return `<section class="flow-explorer-demo" data-explore-content tabindex="-1" aria-label="선택 기능의 가상 시연"><h3>${esc(currentDemo.title)}</h3><p>${esc(currentDemo.explanation)}</p>
-      <label class="flow-explorer-scenario">시연 상황<select data-explore-scenario><option value="success" ${scenario === 'success' ? 'selected' : ''}>정상 예시</option><option value="failure" ${scenario === 'failure' ? 'selected' : ''}>오류 예시</option></select></label>
-      <div class="flow-explorer-demo-controls"><button type="button" data-explore-play>시연 시작</button><button type="button" data-explore-pause disabled>일시정지</button><button type="button" data-explore-reset>처음으로</button></div>
       <ol class="flow-explorer-demo-steps">${currentDemo.steps.map((step, index) => `<li data-explore-step="${index}"><strong>${esc(step.label)}</strong><p>${esc(step.message)}</p><span data-explore-step-state>대기</span></li>`).join('')}</ol>
-      <p class="flow-explorer-demo-status" role="status" aria-live="polite" data-explore-demo-status>시연을 시작해 입력부터 출력까지 확인하세요.</p>
       <section class="flow-explorer-demo-output" data-explore-output hidden><h4>${currentDemo.presentation === 'structure' ? '현재 코드의 구조' : '가상 출력'}</h4><dl>${currentDemo.outputs.map((entry) => `<div><dt>${esc(entry.label)}</dt><dd>${esc(entry.value)}</dd></div>`).join('')}</dl><p>${currentDemo.presentation === 'structure' ? '생성된 소스 계약의 설명입니다. 실제 함수 호출·API 요청·저장은 하지 않았습니다.' : '학습용 가상 값입니다. 실제 평가 결과나 실행 시간이 아닙니다.'}</p></section></section>`;
   }
   function renderDemoState(state = playback.snapshot()) {
-    if (!dialog.open || tab !== 'demo') return;
+    if (!dialog.open) return;
+    mapController?.setPlayback(state);
     dialog.querySelectorAll('[data-explore-step]').forEach((item) => {
       const index = Number(item.dataset.exploreStep);
       item.dataset.state = index < state.index || state.status === 'complete' ? 'complete' : index === state.index ? 'running' : 'waiting';
@@ -91,57 +95,109 @@ export function mountFlowExplorer(host, { graph = FLOW_GRAPH } = {}) {
     });
     const status = dialog.querySelector('[data-explore-demo-status]');
     if (!status) return;
-    status.textContent = state.status === 'complete' ? '가상 시연이 끝났습니다. 아래에서 예시 출력을 확인하세요.' : state.status === 'paused' ? '시연을 멈췄습니다. 이어서 재생할 수 있습니다.' : state.status === 'playing' ? `${state.demo.steps[state.index].label} · 가상 시연 중` : '시연을 시작해 입력부터 출력까지 확인하세요.';
+    status.textContent = state.status === 'complete' ? '시연 완료 · 기능 시연에서 출력을 확인하세요.' : state.status === 'paused' ? '일시정지 · 이어서 재생할 수 있습니다.' : state.status === 'playing' ? `${state.demo.steps[state.index].label} · 가상 시연 중` : '가상 시연 · 실제 요청은 보내지 않습니다.';
     const play = dialog.querySelector('[data-explore-play]');
     play.disabled = state.status === 'playing'; play.textContent = state.status === 'paused' ? '이어서 재생' : state.status === 'complete' ? '다시 시연' : '시연 시작';
     dialog.querySelector('[data-explore-pause]').disabled = state.status !== 'playing';
-    dialog.querySelector('[data-explore-output]').hidden = state.status !== 'complete';
+    const output = dialog.querySelector('[data-explore-output]');
+    if (output) output.hidden = state.status !== 'complete';
   }
   function renderSidebarList() {
     const list = dialog.querySelector('[data-explore-list]');
     if (!list) return;
+    const index = dialog.querySelector('.flow-explorer-index'), oldTop = index.scrollTop;
+    const prefixHeight = list.getBoundingClientRect().top - index.getBoundingClientRect().top + oldTop;
+    list.style.minHeight = `${Math.max(0, oldTop + index.clientHeight - prefixHeight)}px`;
     const node = graph.node(selected()), groupNode = node.kind === 'overview' ? node : graph.groupFor(node.id);
     const ids = search.trim() ? [...graph.nodes.keys()].filter((id) => `${graph.node(id).label} ${id}`.toLocaleLowerCase('ko-KR').includes(search.trim().toLocaleLowerCase('ko-KR')))
       : groupNode?.members || [node.id];
     list.innerHTML = ids.map((id) => nodeButton(id, true)).join('') || '<p class="flow-explorer-empty">검색 결과가 없습니다.</p>';
     dialog.querySelector('[data-explore-list-count]').textContent = `${search.trim() ? '전체 기능 검색' : groupNode?.label || '관련 기능'} · ${ids.length}개`;
+    index.scrollTop = oldTop;
   }
-  function render({ focus = true } = {}) {
+  function captureScroll() {
+    return Object.fromEntries(['.flow-explorer-sidebar', '.flow-explorer-index', '.flow-explorer-main', '.flow-explorer-layout'].map((selector) => [selector, dialog.querySelector(selector)?.scrollTop || 0]));
+  }
+  function restoreScroll(values) {
+    for (const [selector, top] of Object.entries(values || {})) {
+      const element = dialog.querySelector(selector);
+      if (element) element.scrollTop = top;
+    }
+  }
+  function savePosition() {
+    if (!selected()) return;
+    scrollPositions.set(`${selected()}:${tab}`, captureScroll());
+    const view = mapController?.snapshot();
+    if (view) views.set(`${selected()}:${expanded}`, view);
+  }
+  function render({ focus = true, scroll = captureScroll() } = {}) {
     const node = graph.node(selected());
     if (!node) return;
-    dialog.innerHTML = `<header class="flow-explorer-header"><div><h2 id="flow-explorer-title">${esc(node.label)} · 세부 흐름</h2><p id="flow-explorer-notice">코드 구조 탐색 · 시연 전용 창 / 실제 이용 상태는 바깥 모니터링 화면에서 확인합니다.</p></div><button type="button" data-explore-close aria-label="세부 흐름 창 닫기">닫기</button></header>
-      <nav class="flow-explorer-breadcrumb" aria-label="세부 흐름 탐색 위치"><button type="button" data-explore-back ${history.length < 2 ? 'disabled' : ''}>이전 단계</button><ol>${history.map((id, index) => `<li><button type="button" data-explore-level="${index}" ${index === history.length - 1 ? 'aria-current="step"' : ''}>${esc(graph.node(id).label)}</button></li>`).join('')}</ol></nav>
-      <div class="flow-explorer-layout"><aside class="flow-explorer-sidebar" aria-label="흐름 탐색과 시연"><div class="flow-explorer-tabs" role="group" aria-label="세부 보기 종류"><button type="button" data-explore-tab="flow" aria-pressed="${tab === 'flow'}">세부 흐름</button><button type="button" data-explore-tab="demo" aria-pressed="${tab === 'demo'}">기능 시연</button></div><details class="flow-explorer-index" open><summary>관련 기능 탐색</summary><label>기능 검색<input type="search" data-explore-search placeholder="이름 또는 코드 검색" maxlength="100" value="${esc(search)}"></label><div class="flow-explorer-summary-nav">${graph.overview.map((entry) => nodeButton(entry.id, true)).join('')}</div><h3 data-explore-list-count></h3><div class="flow-explorer-function-list" data-explore-list></div></details></aside><main class="flow-explorer-main">${tab === 'demo' ? demoMarkup() : renderFlow(node.id)}</main></div>`;
-    renderSidebarList(); renderDemoState();
+    const priorView = mapController?.snapshot();
+    const priorAnchor = mapController?.anchor();
+    mapController?.destroy(); mapController = null;
+    if (!dialog.querySelector('.flow-explorer-layout')) dialog.innerHTML = `<header class="flow-explorer-header"><div><h2 id="flow-explorer-title"></h2><p id="flow-explorer-notice">코드 구조 탐색 · 시연 전용 창 / 실제 이용 상태는 바깥 모니터링 화면에서 확인합니다.</p></div><button type="button" data-explore-close aria-label="세부 흐름 창 닫기">닫기</button></header>
+      <nav class="flow-explorer-breadcrumb" aria-label="세부 흐름 탐색 위치"><button type="button" data-explore-back>이전 단계</button><ol></ol></nav>
+      <div class="flow-explorer-layout"><aside class="flow-explorer-sidebar" aria-label="흐름 탐색과 시연"><div class="flow-explorer-dock"><div class="flow-explorer-tabs" role="group" aria-label="세부 보기 종류"><button type="button" data-explore-tab="flow">세부 흐름</button><button type="button" data-explore-tab="demo">기능 시연</button></div><label class="flow-explorer-scenario">시연 상황<select data-explore-scenario><option value="success">정상 예시</option><option value="failure">오류 예시</option></select></label><div class="flow-explorer-demo-controls"><button type="button" data-explore-play>시연 시작</button><button type="button" data-explore-pause disabled>일시정지</button><button type="button" data-explore-reset>처음으로</button></div><p class="flow-explorer-demo-status" role="status" aria-live="polite" data-explore-demo-status></p></div><details class="flow-explorer-index" open><summary>관련 기능 탐색</summary><label>기능 검색<input type="search" data-explore-search placeholder="이름 또는 코드 검색" maxlength="100"></label><div class="flow-explorer-summary-nav">${graph.overview.map((entry) => nodeButton(entry.id, true)).join('')}</div><h3 data-explore-list-count></h3><div class="flow-explorer-function-list" data-explore-list></div></details></aside><main class="flow-explorer-main"><div data-explore-body></div></main></div>`;
+    dialog.querySelector('#flow-explorer-title').textContent = `${node.label} · 세부 흐름`;
+    dialog.querySelector('[data-explore-back]').disabled = history.length < 2;
+    dialog.querySelector('.flow-explorer-breadcrumb ol').innerHTML = history.map((id, index) => `<li><button type="button" data-explore-level="${index}" ${index === history.length - 1 ? 'aria-current="step"' : ''}>${esc(graph.node(id).label)}</button></li>`).join('');
+    dialog.querySelectorAll('[data-explore-tab]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.exploreTab === tab)));
+    dialog.querySelector('[data-explore-scenario]').value = scenario;
+    dialog.querySelector('[data-explore-search]').value = search;
+    dialog.querySelectorAll('.flow-explorer-summary-nav [data-explore-node]').forEach((button) => { if (button.dataset.exploreNode === selected()) button.setAttribute('aria-current', 'step'); else button.removeAttribute('aria-current'); });
+    const model = buildExplorerMap(graph, selected(), { expanded });
+    const body = dialog.querySelector('[data-explore-body]');
+    const main = dialog.querySelector('.flow-explorer-main');
+    body.style.minHeight = `${Math.max(0, (scroll['.flow-explorer-main'] || 0) + main.clientHeight - 32)}px`;
+    body.innerHTML = `<div class="flow-explorer-map-heading"><div><h3>${esc(node.label)}의 연결 지도</h3><p>${expanded ? '전체 관련 흐름' : '선택 주변 흐름'} · ${model.nodes.length}개 카드 · ${model.edges.length}개 연결${!expanded && model.total > model.nodes.length ? ` / 전체 ${model.total}개는 펼쳐서 확인` : ''}</p></div><button type="button" data-explore-map-scope aria-pressed="${expanded}">${expanded ? '선택 주변만 보기' : '전체 관련 흐름 보기'}</button></div>${explorerMapMarkup(model)}${tab === 'demo' ? demoMarkup() : renderFlow(node.id)}`;
+    renderSidebarList();
+    const nextAnchor = model.nodes.find((entry) => entry.selected);
+    const continuousView = priorView && priorAnchor && nextAnchor ? { ...priorView,
+      x: priorView.x + (priorAnchor.x - nextAnchor.x - MAP_CARD.width / 2) * priorView.scale,
+      y: priorView.y + (priorAnchor.y - nextAnchor.y - MAP_CARD.height / 2) * priorView.scale } : priorView;
+    mapController = mountExplorerMap(dialog.querySelector('[data-explorer-map]'), model, { initialView: views.get(`${selected()}:${expanded}`) || continuousView, onView: (view) => views.set(`${selected()}:${expanded}`, view) });
+    renderDemoState();
+    restoreScroll(scroll);
     if (focus) dialog.querySelector('[data-explore-content]')?.focus({ preventScroll: true });
   }
-  function select(id, { replace = false } = {}) {
+  function select(id, { replace = false, back = false } = {}) {
     if (!graph.node(id) || disposed) return;
+    const scroll = captureScroll();
+    savePosition();
     if (replace) history = [id];
     else {
       const existing = history.indexOf(id);
       history = existing >= 0 ? history.slice(0, existing + 1) : [...history, id];
     }
-    scenario = 'success'; search = '';
+    scenario = 'success';
     currentDemo = makeNodeDemo(graph, id, scenario); playback.select(currentDemo);
-    render();
+    render({ scroll: back ? scrollPositions.get(`${id}:${tab}`) || scroll : scroll, focus: false });
   }
   function close() {
     playback.reset();
+    mapController?.destroy(); mapController = null;
     if (dialog.open) dialog.close();
-    history = []; search = ''; tab = 'flow';
+    history = []; search = ''; tab = 'flow'; expanded = false; views.clear(); scrollPositions.clear(); dialog.innerHTML = '';
     trigger?.isConnected && trigger.focus({ preventScroll: true }); trigger = null;
   }
   function onClick(event) {
     const action = event.target.closest('button');
     if (!action || !dialog.contains(action)) return;
     if (action.hasAttribute('data-explore-close')) { close(); return; }
-    if (action.dataset.exploreNode) { select(action.dataset.exploreNode); return; }
-    if (action.hasAttribute('data-explore-back')) {
-      if (history.length > 1) { history.pop(); select(history.at(-1)); } return;
+    if (action.dataset.exploreNode) {
+      const id = action.dataset.exploreNode, fromSidebar = Boolean(action.closest('.flow-explorer-sidebar'));
+      select(id);
+      const replacement = [...dialog.querySelectorAll(fromSidebar ? '.flow-explorer-sidebar [data-explore-node]' : '[data-map-node]')].find((button) => button.dataset.exploreNode === id);
+      replacement?.focus({ preventScroll: true });
+      return;
     }
-    if (action.hasAttribute('data-explore-level')) { history = history.slice(0, Number(action.dataset.exploreLevel) + 1); select(history.at(-1)); return; }
-    if (action.dataset.exploreTab) { playback.reset(); tab = action.dataset.exploreTab; render(); return; }
+    if (action.hasAttribute('data-explore-back')) {
+      if (history.length > 1) select(history.at(-2), { back: true }); return;
+    }
+    if (action.hasAttribute('data-explore-level')) { select(history[Number(action.dataset.exploreLevel)], { back: true }); return; }
+    if (action.dataset.exploreTab) { savePosition(); const scroll = captureScroll(); tab = action.dataset.exploreTab; render({ focus: false, scroll }); return; }
+    if (action.hasAttribute('data-explore-map-scope')) { savePosition(); expanded = !expanded; render({ focus: false }); dialog.querySelector('[data-explore-map-scope]')?.focus({ preventScroll: true }); return; }
     if (action.hasAttribute('data-explore-play')) { playback.snapshot().status === 'paused' ? playback.resume() : playback.play(); return; }
     if (action.hasAttribute('data-explore-pause')) { playback.pause(); return; }
     if (action.hasAttribute('data-explore-reset')) playback.reset();
@@ -150,7 +206,7 @@ export function mountFlowExplorer(host, { graph = FLOW_GRAPH } = {}) {
   function onChange(event) {
     if (!event.target.matches('[data-explore-scenario]')) return;
     scenario = event.target.value === 'failure' ? 'failure' : 'success';
-    currentDemo = makeNodeDemo(graph, selected(), scenario); playback.select(currentDemo); render();
+    currentDemo = makeNodeDemo(graph, selected(), scenario); playback.select(currentDemo); render({ focus: false });
   }
   function onCancel(event) { event.preventDefault(); close(); }
   function onVisibility() { if (doc.hidden) playback.pause(); }
@@ -161,13 +217,13 @@ export function mountFlowExplorer(host, { graph = FLOW_GRAPH } = {}) {
       if (!graph.node(id) || disposed) return false;
       trigger = opener || doc.activeElement; tab = 'flow';
       select(id, { replace: true });
-      dialog.showModal(); dialog.querySelector('[data-explore-close]')?.focus({ preventScroll: true });
+      dialog.showModal(); renderDemoState(); dialog.querySelector('[data-explore-close]')?.focus({ preventScroll: true });
       return true;
     },
     close,
     destroy() {
       if (disposed) return;
-      close(); disposed = true; playback.destroy(); doc.removeEventListener('visibilitychange', onVisibility);
+      close(); disposed = true; playback.destroy(); disposeOverview(); disposeVisibility(); doc.removeEventListener('visibilitychange', onVisibility);
       dialog.removeEventListener('click', onClick); dialog.removeEventListener('input', onInput); dialog.removeEventListener('change', onChange); dialog.removeEventListener('cancel', onCancel); dialog.remove();
     },
   };
