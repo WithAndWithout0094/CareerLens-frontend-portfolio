@@ -337,6 +337,112 @@ def test_claimed_report_survives_expiry_and_service_restart(setup_service):
     assert len(new_client.get(PREFIX + "/reports", headers={"Authorization": "Bearer member-a"}).json["reports"]) == 1
 
 
+class DurableArchiveFixture:
+    """Independent backing store shared by otherwise isolated service instances."""
+    def __init__(self):
+        self.rows = {}
+        self.fail = False
+
+    def save(self, uid, row):
+        if self.fail:
+            raise OSError('private database connection detail')
+        existing = self.rows.get(row['id'])
+        if existing and existing['owner_user'] != uid:
+            raise type('ArchiveOwnerConflict', (Exception,), {})()
+        self.rows.setdefault(row['id'], {**dict(row), 'owner_user': uid})
+
+    def list(self, uid, *, limit, offset):
+        return sorted((row for row in self.rows.values() if row['owner_user'] == uid),
+                      key=lambda row: (row['created'], row['id']), reverse=True)[offset:offset + limit]
+
+    def get(self, uid, ident):
+        row = self.rows.get(ident)
+        return row if row and row['owner_user'] == uid else None
+
+    def delete(self, uid, ident):
+        if self.fail:
+            raise OSError('private database connection detail')
+        if self.get(uid, ident):
+            del self.rows[ident]
+            return True
+        return False
+
+
+def test_claimed_report_survives_replacement_of_the_entire_ephemeral_store(setup_service):
+    archive = DurableArchiveFixture()
+    _, client, service = setup_service(member_archive=archive)
+    ident = start(client).json['run_id']
+    wait_for(client, ident)
+    original = claim(client, ident)
+    assert original.status_code == 200
+    service.shutdown()
+    # Render may replace the filesystem, not merely restart on the same path.
+    _, fresh_client, fresh = setup_service(member_archive=archive)
+    assert fresh.path != service.path
+    same_owner = {'Authorization': 'Bearer member-a'}
+    assert fresh_client.get(PREFIX + '/reports', headers=same_owner).json['reports'][0]['run_id'] == ident
+    assert fresh_client.get(PREFIX + '/reports/' + ident, headers=same_owner).json == {
+        key: value for key, value in original.json.items() if key != 'owner_user_id'}
+    assert fresh_client.get(PREFIX + '/reports/' + ident).status_code == 401
+    stranger = {'Authorization': 'Bearer member-b'}
+    assert fresh_client.get(PREFIX + '/reports', headers=stranger).json['reports'] == []
+    assert fresh_client.get(PREFIX + '/reports/' + ident, headers=stranger).status_code == 404
+    assert fresh_client.delete(PREFIX + '/reports/' + ident, headers=stranger).status_code == 404
+    assert fresh_client.delete(PREFIX + '/reports/' + ident, headers=same_owner).status_code == 204
+    assert ident not in archive.rows
+
+
+def test_archive_failure_does_not_acknowledge_claim_or_discard_the_result(setup_service):
+    archive = DurableArchiveFixture()
+    _, client, service = setup_service(member_archive=archive)
+    ident = start(client).json['run_id']
+    wait_for(client, ident)
+    archive.fail = True
+    rejected = claim(client, ident)
+    assert rejected.status_code == 503
+    assert 'private' not in rejected.get_data(as_text=True)
+    with service.connect() as db:
+        row = db.execute('SELECT owner_user,result FROM guest_analyses WHERE id=?', (ident,)).fetchone()
+        assert row['owner_user'] is None and row['result']
+    archive.fail = False
+    assert claim(client, ident).status_code == 200
+    assert archive.rows[ident]['owner_user'] == 'user-a'
+    assert claim(client, ident).status_code == 200  # Retry is idempotent.
+    assert len(archive.rows) == 1
+
+
+def test_existing_owned_sqlite_reports_are_backfilled_only_for_verified_owner(setup_service):
+    _, client, service = setup_service()
+    ident = start(client).json['run_id']
+    wait_for(client, ident)
+    assert claim(client, ident).status_code == 200
+    service.shutdown()
+    archive = DurableArchiveFixture()
+    _, new_client, _ = setup_service(path=service.path, member_archive=archive)
+    assert new_client.get(PREFIX + '/reports', headers={'Authorization': 'Bearer member-b'}).json['reports'] == []
+    assert not archive.rows
+    assert new_client.get(PREFIX + '/reports', headers={'Authorization': 'Bearer member-a'}).status_code == 200
+    assert archive.rows[ident]['owner_user'] == 'user-a'
+
+
+def test_durable_report_history_pages_past_one_hundred_without_other_owners(setup_service):
+    archive = DurableArchiveFixture()
+    for number in range(123):
+        archive.rows[str(number)] = {
+            'id': str(number), 'owner_user': 'user-a', 'status': 'completed',
+            'created': 1000.0 + number, 'completed': 1001.0 + number,
+            'job_id': JOB['id'], 'job_summary': json.dumps(JOB), 'result': json.dumps(RESULT),
+        }
+    archive.rows['stranger'] = {**archive.rows['0'], 'id': 'stranger', 'owner_user': 'user-b', 'created': 9999.0}
+    _, client, _ = setup_service(member_archive=archive)
+    headers = {'Authorization': 'Bearer member-a'}
+    first = client.get(PREFIX + '/reports?limit=20&offset=100', headers=headers)
+    last = client.get(PREFIX + '/reports?limit=20&offset=120', headers=headers)
+    assert len(first.json['reports']) == 20 and first.json['next_offset'] == 120
+    assert len(last.json['reports']) == 3 and last.json['next_offset'] is None
+    assert all(row['run_id'] != 'stranger' for row in first.json['reports'] + last.json['reports'])
+
+
 def test_old_frontend_store_adds_measurements_without_changing_or_reanalysing_results(setup_service):
     _, client, service = setup_service()
     ident = start(client).json["run_id"]

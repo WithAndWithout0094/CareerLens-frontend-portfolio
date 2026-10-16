@@ -171,6 +171,23 @@ test('catalog return targets accept only the local role workflow and normalize i
   assert.equal(catalogReturnPath('opportunities?role_id=backend&extra=discard').includes('extra'), false);
 });
 
+test('standalone catalog detail and return retain filters and page without a role return target', () => {
+  const query = catalogQuery(new URLSearchParams({
+    q: 'Python & SQL', location: '서울', role_category: '데이터 분석',
+    skill: 'Python', employment_type: '정규직', experience_level: '신입', page: '2',
+  }));
+  const html = jobListPage({ items: [posting], total: 20, page: 2, page_size: 12 }, query, { id: 'member' });
+  const detail = catalogRoute(linkForLabel(html, posting.role));
+  assert.equal(detail.id, posting.id);
+  assert.equal(detail.query.toString(), query.toString());
+  const back = catalogRoute(linkForLabel(jobDetailPage(posting, { id: 'member' }, detail.query), '← 공고 목록'));
+  assert.equal(back.query.toString(), query.toString());
+  assert.equal(catalogPath('jobs', new URLSearchParams()), 'jobs');
+  assert.equal(catalogPath('jobs/example', new URLSearchParams({ ignored: 'not-retained' })), 'jobs/example');
+  assert.equal(catalogRoute('#/jobs/example?page=2').query.get('page'), '2');
+  assert.equal(catalogRoute(linkForLabel(html, '검색 초기화')).query.has('q'), false);
+});
+
 test('catalog controller preserves return state on search while keeping it out of backend filters', async () => {
   const source = readFileSync(
     new URL('../../src/features/job-postings/catalog.js', import.meta.url),

@@ -174,3 +174,28 @@ test('a cancelled resume callback cannot advance the newly selected card or a re
   assert.equal(runner.snapshot().index, 0);
   runner.destroy();
 });
+
+test('error demonstration ends as an error after input and processing, never as successful completion', () => {
+  const tasks = [], states = [];
+  const runner = createExplorerPlayback({ schedule: (fn) => { tasks.push(fn); return tasks.length; }, cancel() {}, onChange: (state) => states.push({ status: state.status, index: state.index }) });
+  const example = makeNodeDemo(FLOW_GRAPH, 'criterion:C2', 'failure');
+  runner.select(example); runner.play();
+  assert.equal(runner.snapshot().index, 0);
+  tasks.at(-1)();
+  assert.equal(runner.snapshot().index, 1);
+  assert.equal(runner.snapshot().status, 'playing');
+  runner.pause(); runner.resume();
+  const delayed = tasks.at(-1);
+  delayed();
+  assert.deepEqual(states.at(-1), { status: 'failed', index: 2 });
+  assert.ok(states.every((state) => state.status !== 'complete'));
+  assert.match(runner.snapshot().demo.steps[2].label, /오류/);
+  runner.reset();
+  delayed();
+  assert.deepEqual(states.at(-1), { status: 'idle', index: -1 });
+  runner.select(makeNodeDemo(FLOW_GRAPH, 'criterion:C2')); runner.play();
+  tasks.at(-1)(); tasks.at(-1)();
+  assert.equal(runner.snapshot().status, 'complete');
+  assert.equal(runner.snapshot().demo.outcome, 'success');
+  runner.destroy();
+});

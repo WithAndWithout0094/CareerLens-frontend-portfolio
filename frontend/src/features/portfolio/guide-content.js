@@ -97,7 +97,7 @@ const pages = {
     hint('flow-connection', '실시간 연결 상태', '서버 연결 상태와 관찰 범위를 확인합니다. 연결 장애를 정상 진행으로 표시하지 않습니다.', ['.flow-connection'], 'left'),
     hint('flow-global', '여러 사용자의 실행 기록', '전체 이용 기록에서 대상을 선택하면 아래 지도에 해당 실행이 표시됩니다.', ['[data-flow-global-feed]']),
     hint('flow-demo', '카드별 가상 시연', '요약 카드를 누르면 왼쪽 탭 아래에 시연 조작부가 있습니다. 상황을 고르고 시연을 시작하면 지도와 함께 입력·처리·출력을 확인합니다.', ['[data-flow-explore="overview:analysis"]'], 'right'),
-    hint('flow-map', '빛으로 따라가는 서비스 흐름', '선과 빛은 코드 연결 방향을 안내합니다. 카드를 누르면 가로 세부 지도가 열리고, 지도 위 휠로 확대·축소하거나 드래그로 이동합니다. 하위 카드 탐색과 이전 단계 복귀도 가능합니다.', ['.flow-overview-stages']),
+    hint('flow-map', '빛으로 따라가는 서비스 흐름', '작은 카드로 준비·요청·분석·결과를 살펴봅니다. 카드에 올리면 관련 연결을 보고, 누르면 세부 흐름과 시연을 엽니다. 지도 위 휠로 확대·축소하거나 드래그로 이동할 수 있습니다.', ['[data-overview-map]']),
     hint('flow-source-code', '실제 코드와 연결된 구조', '기능 코드에서 생성한 카드와 연결입니다. 코드 변경 후 빌드·배포하면 반영됩니다. 상세 창은 시연용이며 실시간 실행 기록과 구분됩니다.', ['.flow-source-version'], 'left'),
     hint('flow-ledger', '실시간 세부 항목', '펼치면 수집 가능한 항목의 실제 상태와 현재 코드의 연결 관계를 확인합니다.', ['.flow-ledger > summary']),
     hint('flow-log', '이벤트·응답 시간', '펼치면 선택한 대상의 최근 처리 기록과 측정된 시간을 확인합니다.', ['.flow-instrument-details > summary'], 'right'),

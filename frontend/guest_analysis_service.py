@@ -80,6 +80,7 @@ MESSAGES = {
     "conflict": "현재 상태에서는 요청을 완료할 수 없습니다. 분석 상태를 다시 확인해 주세요.",
     "rate_limited": "분석 요청이 많습니다. 잠시 후 다시 시도해 주세요.",
     "service_unavailable": "분석 서비스를 잠시 이용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+    "report_archive_unavailable": "보고서를 계정에 저장하지 못했습니다. 임시 보관 시간이 지나기 전에 다시 시도해 주세요.",
     "forbidden": "요청한 페이지에서 다시 시도해 주세요.",
 }
 
@@ -100,12 +101,13 @@ class GuestError(Exception):
 class GuestAnalysisService:
     def __init__(self, store_path, fetch_job, verify_user, runner, available, *,
                  ttl_seconds=1800, timeout_seconds=900, max_active=3, max_queued=4, observer=None,
-                 analysis_budget=None):
+                 analysis_budget=None, member_archive=None):
         self.path = Path(store_path)
         self.fetch_job, self.verify_user = fetch_job, verify_user
         self.runner, self.available = runner, available
         self.observer = observer
         self.analysis_budget = analysis_budget
+        self.member_archive = member_archive
         self.global_daily_limit = 60
         self.guest_hourly_limit = 5
         self.ttl, self.timeout = ttl_seconds, timeout_seconds
@@ -151,6 +153,8 @@ class GuestAnalysisService:
                         db.execute("ALTER TABLE guest_analyses ADD COLUMN flow_events TEXT NOT NULL DEFAULT '[]'")
                     if "analysis_duration_ms" not in columns:
                         db.execute("ALTER TABLE guest_analyses ADD COLUMN analysis_duration_ms REAL")
+                    if "failure_code" not in columns:
+                        db.execute("ALTER TABLE guest_analyses ADD COLUMN failure_code TEXT")
                     db.execute("CREATE TABLE IF NOT EXISTS guest_sessions (guest_hash TEXT PRIMARY KEY, expires REAL NOT NULL)")
                     db.execute("CREATE TABLE IF NOT EXISTS guest_admissions (guest_hash TEXT NOT NULL, ip_hash TEXT NOT NULL, created REAL NOT NULL)")
                     db.execute("CREATE TABLE IF NOT EXISTS guest_cancelled_requests (guest_hash TEXT NOT NULL, request_key TEXT NOT NULL, expires REAL NOT NULL, PRIMARY KEY(guest_hash,request_key))")
@@ -252,6 +256,8 @@ class GuestAnalysisService:
             "report_locked": True, "storage_origin": "frontend_guest",
             "flow_events": read_flow_events(row["flow_events"]),
             "analysis_duration_ms": row["analysis_duration_ms"],
+            "failure_code": row["failure_code"] if row["failure_code"] in {
+                'provider_quota_exhausted', 'provider_rate_limited', 'provider_access_unavailable'} else None,
         }
 
     @staticmethod
@@ -259,6 +265,22 @@ class GuestAnalysisService:
         result = json.loads(row["result"])
         return {**result, "run_id": row["id"], "job_id": row["job_id"],
                 "job_summary": json.loads(row["job_summary"]), "storage_origin": "frontend_guest"}
+
+    def archive_report(self, uid, row, *, stale_copy=False):
+        if self.member_archive is None:
+            return
+        try:
+            self.member_archive.save(uid, row)
+        except Exception as error:
+            # A uniqueness conflict is safe to surface; database/provider details
+            # and private report data never leave this boundary.
+            if type(error).__name__ == 'ArchiveOwnerConflict':
+                raise GuestError(409, 'conflict') from None
+            if type(error).__name__ == 'ArchiveReportDeleted':
+                if stale_copy:
+                    return
+                raise GuestError(404, 'not_found') from None
+            raise GuestError(503, 'report_archive_unavailable') from None
 
     def create(self, data, idem):
         if not isinstance(data, dict) or not isinstance(idem, str) or not 1 <= len(idem) <= 128:
@@ -425,9 +447,16 @@ class GuestAnalysisService:
             if saved and saved.rowcount:
                 self.observe(run_id, "guest_store", "complete")
                 self.observe(run_id, "analysis", "partial" if result["status"] == "partial" else "complete", progress=100)
-        except (Exception, asyncio.CancelledError):
+        except (Exception, asyncio.CancelledError) as error:
+            try:
+                from app.core.analysis_failure import analysis_failure_code
+                failure_code = analysis_failure_code(error)
+            except ImportError:
+                failure_code = 'evaluation_failed'
+            if failure_code not in {'provider_quota_exhausted', 'provider_rate_limited', 'provider_access_unavailable'}:
+                failure_code = 'evaluation_failed'
             with self.connect() as db:
-                failed = db.execute("UPDATE guest_analyses SET status='failed',stage='failed',result=NULL,completed=? WHERE id=? AND status IN ('queued','running')", (self._clock(), run_id))
+                failed = db.execute("UPDATE guest_analyses SET status='failed',stage='failed',result=NULL,completed=?,failure_code=? WHERE id=? AND status IN ('queued','running')", (self._clock(), failure_code, run_id))
             self.observe(run_id, "analysis", "failed" if failed.rowcount else "cancelled")
         finally:
             self._capacity.release()
@@ -558,6 +587,9 @@ def create_guest_blueprint(store_path, fetch_job, verify_user, runner=None, avai
                 raise GuestError(409, "conflict")
             if row["status"] not in FINAL or not row["result"]:
                 raise GuestError(409, "conflict")
+            # Commit the durable copy before acknowledging the account link.
+            # On outage leave the guest result untouched and allow a safe retry.
+            service.archive_report(uid, row)
             db.execute("UPDATE guest_analyses SET owner_user=? WHERE id=? AND (owner_user IS NULL OR owner_user=?)", (uid, run_id, uid))
         # The caller can use this backend-verified identity without another
         # serial /me round trip before displaying the already stored report.
@@ -566,27 +598,55 @@ def create_guest_blueprint(store_path, fetch_job, verify_user, runner=None, avai
     @blueprint.get("/reports")
     def reports():
         uid = service.user()
+        try:
+            limit = int(request.args.get('limit', '100'))
+            offset = int(request.args.get('offset', '0'))
+            if not 1 <= limit <= 100 or offset < 0:
+                raise ValueError()
+        except ValueError:
+            raise GuestError(400, 'invalid_request') from None
         service.cleanup()
         with service.connect() as db:
-            rows = db.execute("SELECT * FROM guest_analyses WHERE owner_user=? AND status IN ('completed','partial') ORDER BY created DESC LIMIT 100", (uid,)).fetchall()
+            if service.member_archive is not None:
+                # Upgrade only records already bound to this verified account.
+                # No anonymous claim, owner inference, or cross-account repair.
+                local_rows = db.execute("SELECT * FROM guest_analyses WHERE owner_user=? AND status IN ('completed','partial')", (uid,)).fetchall()
+                for row in local_rows:
+                    service.archive_report(uid, row, stale_copy=True)
+                rows = service.member_archive.list(uid, limit=limit + 1, offset=offset)
+            else:
+                rows = db.execute("SELECT * FROM guest_analyses WHERE owner_user=? AND status IN ('completed','partial') ORDER BY created DESC,id DESC LIMIT ? OFFSET ?", (uid, limit + 1, offset)).fetchall()
+        has_more = len(rows) > limit
         output = []
-        for row in rows:
+        for row in rows[:limit]:
             summary = json.loads(row["job_summary"])
             output.append({"run_id": row["id"], "status": row["status"], "created_at": stamp(row["created"]),
                            "completed_at": stamp(row["completed"]), "job_id": row["job_id"],
                            "title": summary.get("title", ""), "company_name": summary.get("company_name", ""),
                            "storage_origin": "frontend_guest"})
-        return jsonify({"reports": output})
+        return jsonify({"reports": output, "next_offset": offset + limit if has_more else None})
 
     @blueprint.route("/reports/<run_id>", methods=["GET", "DELETE"])
     def report(run_id):
         uid = service.user()
+        try:
+            if str(UUID(run_id)) != run_id:
+                raise ValueError()
+        except ValueError:
+            raise GuestError(404, 'not_found') from None
         with service.connect() as db:
-            row = db.execute("SELECT * FROM guest_analyses WHERE id=? AND owner_user=? AND status IN ('completed','partial')", (run_id, uid)).fetchone()
+            local = db.execute("SELECT * FROM guest_analyses WHERE id=? AND owner_user=? AND status IN ('completed','partial')", (run_id, uid)).fetchone()
+            if local and local['result']:
+                service.archive_report(uid, local, stale_copy=True)
+            row = service.member_archive.get(uid, run_id) if service.member_archive is not None else local
             if not row or not row["result"]:
                 raise GuestError(404, "not_found")
             if request.method == "DELETE":
+                # SQLite cleanup commits only when the durable deletion succeeds.
+                # Logout never uses this explicit owner-checked deletion route.
                 db.execute("DELETE FROM guest_analyses WHERE id=? AND owner_user=?", (run_id, uid))
+                if service.member_archive is not None:
+                    service.member_archive.delete(uid, run_id)
                 return "", 204
         return jsonify(service.report(row))
 

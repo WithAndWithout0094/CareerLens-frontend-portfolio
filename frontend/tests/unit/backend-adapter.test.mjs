@@ -28,6 +28,63 @@ beforeEach(() => {
   globalThis.sessionStorage = createStorage();
 });
 
+test('logout and a fresh browser session recover the same server history without any delete', async () => {
+  const calls = [];
+  const request = async (path, options = {}) => {
+    calls.push([path, options.method || 'GET']);
+    if (path === '/auth/login') return { access_token: 'owner-a', refresh_token: 'refresh-a' };
+    if (path === '/evaluations?limit=20&offset=0&completed_only=true')
+      return [{ id: 'saved-run', status: 'completed', created_at: '2026-10-10T10:00:00Z' }];
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  storeBackendCredentials({ access_token: 'owner-a' });
+  sessionStorage.setItem('careerlens.backend.workspace:owner-a', JSON.stringify({ report: { run_id: 'saved-run' } }));
+  const before = await backendApi('/account/reports', {}, request, ApiError);
+  await backendApi('/auth/logout', { method: 'POST', body: {} }, request, ApiError);
+  assert.equal(sessionStorage.getItem('careerlens.backend.workspace:owner-a'), null);
+  globalThis.sessionStorage = createStorage();
+  await backendApi('/auth/login', { method: 'POST', body: { email: 'synthetic@example.test', password: 'synthetic' } }, request, ApiError);
+  const after = await backendApi('/account/reports', {}, request, ApiError);
+  assert.deepEqual(after, before);
+  assert.equal(calls.some(([, method]) => method === 'DELETE'), false);
+});
+
+test('a report-history response started before logout cannot enter another account', async () => {
+  storeBackendCredentials({ access_token: 'owner-a' });
+  let release;
+  const pending = backendApi('/account/reports', {}, () => new Promise((resolve) => { release = resolve; }), ApiError);
+  await backendApi('/auth/logout', { method: 'POST', body: {} }, () => assert.fail('logout is local'), ApiError);
+  storeBackendCredentials({ access_token: 'owner-b' });
+  release([{ id: 'a-private-run', status: 'completed', created_at: '2026-10-10T10:00:00Z' }]);
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(sessionStorage.getItem('careerlens.backend.access-token'), 'owner-b');
+});
+
+test('claimed guest reports page independently when the member evaluation history is empty', async () => {
+  storeBackendCredentials({ access_token: 'owner-a' });
+  const calls = [];
+  const request = async (path) => {
+    calls.push(path);
+    if (path === '/local-guest/capabilities') return { available: true, storage_origin: 'frontend_guest' };
+    if (path === '/me') return { user_id: 'owner-a' };
+    if (path.startsWith('/evaluations?')) return [];
+    if (path === '/local-guest/reports?limit=20&offset=0') return {
+      reports: Array.from({ length: 20 }, (_, n) => ({ run_id: `guest-${n}`, status: 'completed', created_at: '2026-10-10T10:00:00Z' })), next_offset: 20,
+    };
+    if (path === '/local-guest/reports?limit=20&offset=20') return {
+      reports: [{ run_id: 'guest-20', status: 'completed', created_at: '2026-10-09T10:00:00Z' }], next_offset: null,
+    };
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  await backendApi('/auth/session', {}, request, ApiError);
+  const first = await backendApi('/account/reports', {}, request, ApiError);
+  const second = await backendApi('/account/reports?offset=20', {}, request, ApiError);
+  assert.equal(first.items.length, 20);
+  assert.equal(first.next_offset, 20);
+  assert.equal(second.items[0].id, 'local-guest:guest-20');
+  assert.equal(second.next_offset, null);
+});
+
 test('member sample resumes use the project catalog and exact file content, not a repeated placeholder', async () => {
   sessionStorage.setItem('careerlens.backend.access-token', 'fixture-token');
   const calls = [];
@@ -125,7 +182,7 @@ test('saved report pages filter completed evaluations while paging over the orig
   const request = async (path, options) => {
     calls.push(path);
     assert.equal(options.signal, controller.signal);
-    return path.endsWith('offset=200') ? page : [];
+    return path.includes('offset=200&') ? page : [];
   };
   const first = await backendApi(
     '/account/reports?offset=200',
@@ -147,7 +204,7 @@ test('saved report pages filter completed evaluations while paging over the orig
     ApiError,
   );
   assert.deepEqual(last, { items: [], next_offset: null });
-  assert.deepEqual(calls, ['/evaluations?limit=20&offset=200', '/evaluations?limit=20&offset=220']);
+  assert.deepEqual(calls, ['/evaluations?limit=20&offset=200&completed_only=true', '/evaluations?limit=20&offset=220&completed_only=true']);
 });
 
 test('saved report list uses database evaluations when guest storage is not provided', async () => {
@@ -158,7 +215,7 @@ test('saved report list uses database evaluations when guest storage is not prov
     if (path === '/local-guest/capabilities')
       return { available: false };
     if (path === '/me') return { user_id: 'member-1' };
-    if (path === '/evaluations?limit=20&offset=0')
+    if (path === '/evaluations?limit=20&offset=0&completed_only=true')
       return [{ id: 'db-run', status: 'completed', created_at: '2026-10-10T10:00:00Z' }];
     assert.fail(`Unexpected request: ${path}`);
   };
@@ -168,7 +225,7 @@ test('saved report list uses database evaluations when guest storage is not prov
   assert.deepEqual(calls, [
     '/local-guest/capabilities',
     '/me',
-    '/evaluations?limit=20&offset=0',
+    '/evaluations?limit=20&offset=0&completed_only=true',
   ]);
 });
 
@@ -191,7 +248,7 @@ test('saved report list validates offsets and upstream arrays', async () => {
         '/account/reports',
         {},
         async (path) => {
-          assert.equal(path, '/evaluations?limit=20&offset=0');
+          assert.equal(path, '/evaluations?limit=20&offset=0&completed_only=true');
           return response;
         },
         ApiError,
@@ -1124,7 +1181,7 @@ test('claiming an incomplete guest upload transfers the actual resume but never 
     }
     if (path === '/resumes/resume-1')
       return { id: 'resume-1', title: 'Guest resume', original_text: '# Guest resume' };
-    if (path === '/evaluations?limit=1') return [];
+    if (path === '/evaluations?limit=1&completed_only=true') return [];
     throw new Error(`Unexpected backend call: ${path}`);
   };
   const claimed = await backendApi('/guest/claim', { method: 'POST' }, request, ApiError);
@@ -1146,13 +1203,13 @@ test('a changed mock posting does not reload an older backend report', async () 
       requests.push(path);
       if (path === '/me') return { id: 'user-1' };
       if (path === '/resumes?limit=100') return [];
-      if (path === '/evaluations?limit=1') return [{ id: 'old-run', status: 'completed' }];
+      if (path === '/evaluations?limit=1&completed_only=true') return [{ id: 'old-run', status: 'completed' }];
       throw new Error(`Unexpected backend call: ${path}`);
     },
     ApiError,
   );
   assert.equal(workspace.draft.report, undefined);
-  assert.equal(requests.includes('/evaluations?limit=1'), false);
+  assert.equal(requests.includes('/evaluations?limit=1&completed_only=true'), false);
 });
 
 test('Supabase profile user_id scopes member sessions and saved workspace state', async () => {
@@ -1161,7 +1218,7 @@ test('Supabase profile user_id scopes member sessions and saved workspace state'
     if (path === '/me') return { user_id: 'supabase-user', display_name: '테스트' };
     if (path === '/resumes?limit=100') return [{ id: 'resume-1' }];
     if (path === '/resumes/resume-1') return { id: 'resume-1', original_text: 'Resume' };
-    if (path === '/evaluations?limit=1') return [];
+    if (path === '/evaluations?limit=1&completed_only=true') return [];
     throw new Error(`Unexpected call: ${path}`);
   };
   const session = await backendApi('/auth/session', {}, request, ApiError);
@@ -1453,7 +1510,7 @@ test('restoring a backend report preserves withheld totals and actual evaluation
     async (path) => {
       if (path === '/me') return { user_id: 'member-1' };
       if (path === '/resumes?limit=100') return [];
-      if (path === '/evaluations?limit=1')
+      if (path === '/evaluations?limit=1&completed_only=true')
         return [{ id: 'run-2', status: 'partial', created_at: '2026-10-09T00:00:00Z' }];
       if (path === '/evaluations/run-2/result') return result;
       if (path === '/reports/report-2') return { report_text: '# 실제 보고서' };
@@ -2301,7 +2358,7 @@ test('incompatible old report cannot block login workspace, but auth failures st
       async (path) => {
         if (path === '/me') return { user_id: 'member' };
         if (path === '/resumes?limit=100') return [];
-        if (path === '/evaluations?limit=1') return [{ id: 'legacy', status: 'partial' }];
+        if (path === '/evaluations?limit=1&completed_only=true') return [{ id: 'legacy', status: 'partial' }];
         if (path === '/evaluations/legacy/result')
           throw new ApiError('Private server failure', status);
         assert.fail(`Unexpected request: ${path}`);

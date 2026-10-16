@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from app.core.config import settings
 from app.core.asyncio import run
+from app.core.analysis_failure import analysis_failure_code
 from app.infrastructure.database.postgres import DB
 from app.integrations.llm.client import LLM
 from app.application.evaluation import execute
@@ -49,8 +50,9 @@ async def process(db, llm, config, run, worker, checkpointer):
         raise
     except Exception as error:
         # Do not log raw exception strings: providers may include credentials or resume text.
-        log.error('Evaluation failed: run=%s type=%s', run['id'], type(error).__name__)
-        updated = await db.update('evaluation_runs', {'status': 'failed', 'failure_reason': type(error).__name__, 'completed_at': datetime.now(timezone.utc).isoformat(), 'lease_expires_at': None},
+        failure_code = analysis_failure_code(error)
+        log.error('Evaluation failed: run=%s type=%s category=%s', run['id'], type(error).__name__, failure_code)
+        updated = await db.update('evaluation_runs', {'status': 'failed', 'failure_reason': failure_code, 'completed_at': datetime.now(timezone.utc).isoformat(), 'lease_expires_at': None},
                         id=f"eq.{run['id']}", worker_id=f'eq.{worker}', status='eq.running')
         if updated and monitor:
             await monitor.publish_run(updated[0])

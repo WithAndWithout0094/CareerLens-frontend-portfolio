@@ -101,7 +101,7 @@ export function createExplorerPlayback({ schedule = setTimeout, cancel = clearTi
   function advance(token) {
     if (destroyed || token !== generation || status !== 'playing') return;
     index++;
-    if (index >= selected.steps.length - 1) { status = 'complete'; timer = null; emit(); return; }
+    if (index >= selected.steps.length - 1) { status = selected.outcome === 'failure' ? 'failed' : 'complete'; timer = null; emit(); return; }
     emit(); timer = schedule(() => advance(token), 900);
   }
   return {

@@ -436,10 +436,21 @@ async def delete_resume(resume_id: UUID, request: Request, uid: str = Depends(us
 
 
 @router.get('/jobs', tags=['jobs'])
-async def jobs(request: Request, uid: str = Depends(user), limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0), company_id: UUID | None = None):
+async def jobs(request: Request, uid: str = Depends(user), limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0), company_id: UUID | None = None, include_details: bool = False):
     db, _, _ = services(request)
     filters = {'company_id': f'eq.{company_id}'} if company_id else {}
-    return await db.select('job_postings', select='id,company_id,title,career_min_months,education_level,source_name,source_external_id', order='collected_at.desc', limit=limit, offset=offset, **filters)
+    fields = 'id,company_id,title,career_min_months,education_level,source_name,source_external_id'
+    if include_details:
+        fields += ',career_max_months,description,responsibilities,requirements,preferred_requirements,employment_type,location,source_url,collected_at,updated_at,published_at,deadline'
+    # A unique tie-breaker keeps adjacent pages stable when seed/import rows
+    # share collected_at. The optional bulk form avoids one request per detail.
+    rows = await db.select('job_postings', select=fields, order='collected_at.desc,id.asc', limit=limit, offset=offset, **filters)
+    if not include_details or not rows:
+        return rows
+    company_ids = sorted({str(row['company_id']) for row in rows if row.get('company_id')})
+    companies = await db.select('companies', select='id,name', id=f'in.({",".join(company_ids)})', limit=len(company_ids)) if company_ids else []
+    names = {str(company['id']): company.get('name') or '' for company in companies}
+    return [{**row, 'companies': {'name': names.get(str(row.get('company_id')), '')}} for row in rows]
 
 
 @router.get('/jobs/{job_id}', tags=['jobs'])
@@ -514,9 +525,12 @@ async def start(body: EvaluationRequest, request: Request, uid: str = Depends(us
 
 
 @router.get('/evaluations', tags=['evaluations'])
-async def evaluations(request: Request, uid: str = Depends(user), limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0)):
+async def evaluations(request: Request, uid: str = Depends(user), limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0), completed_only: bool = False):
     db, _, _ = services(request)
-    return await db.select('evaluation_runs', user_id=f'eq.{uid}', select='id,status,current_stage,progress_percent,created_at', order='created_at.desc', limit=limit, offset=offset)
+    # Apply the history filter before pagination. Recent failed/cancelled jobs
+    # must not hide older saved reports after the browser workspace is cleared.
+    filters = {'status': 'in.(completed,partial)'} if completed_only else {}
+    return await db.select('evaluation_runs', user_id=f'eq.{uid}', select='id,status,current_stage,progress_percent,created_at', order='created_at.desc,id.desc', limit=limit, offset=offset, **filters)
 
 
 @router.get('/evaluations/{run_id}', tags=['evaluations'], response_model=RunStatus)

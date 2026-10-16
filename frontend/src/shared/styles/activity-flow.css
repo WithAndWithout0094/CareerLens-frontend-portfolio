@@ -316,14 +316,13 @@
 .flow-overview header p { max-width: 72ch; color: var(--flow-muted); line-height: 1.7; margin-top: 8px; }
 .flow-overview header > button { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; background: transparent; border: 1px solid var(--flow-border); border-radius: 8px; color: var(--flow-cyan); padding: 11px 14px; min-height: 44px; }
 .flow-overview svg, .flow-explorer svg { width: 18px; height: 18px; flex-shrink: 0; vertical-align: middle; }
-.flow-overview-stages { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; }
-.flow-overview-card { display: flex; flex-direction: column; gap: 12px; text-align: left; padding: 17px 14px; border: 1px solid var(--flow-border); border-radius: 12px; background: var(--flow-panel); color: inherit; min-width: 0; min-height: 210px; line-height: 1.55; transition: border-color .18s ease, background .18s ease; }
+.flow-overview-card { position: absolute; display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 12px; border: 1px solid var(--flow-border); border-radius: 12px; background: var(--flow-panel); color: inherit; min-width: 0; line-height: 1.45; transition: border-color .18s ease, background .18s ease; }
 .flow-overview-card:hover { border-color: var(--flow-cyan); background: color-mix(in srgb, var(--flow-cyan) 7%, var(--flow-panel)); }
-.flow-overview-card > strong { font-size: 16px; font-weight: 650; }
-.flow-overview-card > span:not(.flow-overview-order) { font-size: 12px; color: var(--flow-muted); overflow-wrap: anywhere; }
-.flow-overview-card .flow-overview-order { color: var(--flow-cyan); font-size: 13px; font-variant-numeric: tabular-nums; }
-.flow-overview-card .flow-overview-state { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--flow-border); }
-.flow-overview-card .flow-overview-open { color: var(--flow-cyan) !important; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.flow-overview-card > strong { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 14px; font-weight: 650; }
+.flow-overview-card > strong svg { width: 15px; height: 15px; color: var(--flow-cyan); }
+.flow-overview-card > span { font-size: 10px; color: var(--flow-muted); overflow-wrap: anywhere; }
+.flow-overview-card .flow-overview-description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.flow-overview-card .flow-overview-state { margin-top: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .flow-overview-card:is([data-state=running], [data-state=pending], [data-state=queued]) { border-color: var(--flow-cyan); }
 .flow-overview-card[data-state=failed] .flow-overview-state { color: #ff9bae; }
 .flow-overview-relations { margin-top: 16px; color: var(--flow-muted); line-height: 1.7; }
@@ -424,7 +423,6 @@
 .flow-explorer-demo-output > p { color: var(--flow-muted); margin-top: 12px; line-height: 1.8; font-size: 12px; }
 .flow-mode[data-flow-theme=light] .flow-explorer { --explorer-fg: #192b43; }
 .flow-mode[data-flow-theme=light] .flow-overview-card[data-state=failed] .flow-overview-state { color: #a72c46; }
-@media (max-width: 1200px) { .flow-overview-stages { grid-template-columns: repeat(4, minmax(0, 1fr)); } .flow-overview-card { min-height: 185px; } }
 @media (max-width: 850px) {
   .flow-overview > header { align-items: start; flex-direction: column; gap: 14px; }
   .flow-explorer { width: calc(100% - 20px); height: calc(100dvh - 20px); }
@@ -434,9 +432,6 @@
 }
 @media (max-width: 600px) {
   .flow-overview { margin-block: 24px; } .flow-overview h2 { font-size: 20px; }
-  .flow-overview-stages { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .flow-overview-card { min-height: 195px; padding: 14px 12px; gap: 9px; }
-  .flow-overview-card > strong { font-size: 15px; }
   .flow-explorer { width: 100%; height: 100dvh; margin: 0; border-radius: 0; border: 0; }
   .flow-explorer-header h2 { font-size: 18px; } .flow-explorer-header p { font-size: 11px; }
   .flow-explorer-header > button { padding-inline: 11px; }
@@ -455,10 +450,17 @@
 
 /* Connected light travels along source-derived edges. The ambient map is a
    direction guide; live state remains on the existing observation cards. */
-.flow-overview-stages { position: relative; isolation: isolate; padding: 8px 0 64px; gap: 24px; }
-.flow-overview-card { position: relative; z-index: 1; }
-.flow-overview svg.flow-overview-wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 0; }
-.flow-overview-motion-note { color: var(--flow-muted); font-size: 11px; line-height: 1.7; }
+.flow-overview-card { z-index: 1; }
+.flow-overview-card:is(:hover, :focus-visible) { z-index: 2; }
+.flow-overview-phase { position: absolute; top: 24px; color: var(--flow-muted); font-size: 12px; font-weight: 600; }
+.flow-overview-map-hint { font-size: 12px; color: var(--flow-muted); line-height: 1.6; }
+.flow-overview-map .flow-explorer-map-viewport { height: 420px; }
+.flow-overview-map .flow-map-edge[data-primary=false] { opacity: 0; }
+.flow-overview-map[data-inspect=true] .flow-map-edge { opacity: .12; }
+.flow-overview-map[data-inspect=true] .flow-map-edge[data-primary=false] { opacity: 0; }
+.flow-overview-map[data-inspect=true] .flow-map-edge[data-related=true] { opacity: 1; }
+.flow-overview-map .flow-map-edge[data-primary=false] .flow-map-edge-line { stroke-dasharray: 5 5; }
+.flow-overview-map .flow-map-edge[data-primary=false]:not([data-related=true]) .flow-map-spark { animation-play-state: paused; }
 .flow-map-edge { color: var(--flow-cyan); }
 .flow-map-edge[data-edge-type=composition] { color: var(--flow-violet); }
 .flow-map-edge[data-edge-type=branch] { color: var(--flow-amber); }
@@ -505,9 +507,9 @@
 .flow-explorer-map-viewport { position: relative; height: clamp(330px, 47dvh, 520px); overflow: hidden; touch-action: none; cursor: grab; background-image: radial-gradient(circle, color-mix(in srgb, var(--flow-muted) 20%, transparent) 1px, transparent 1px); background-size: 24px 24px; }
 .flow-explorer-map-viewport[data-dragging=true], .flow-explorer-map-viewport[data-dragging=true] button { cursor: grabbing; user-select: none; }
 .flow-explorer-map-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.flow-explorer svg.flow-explorer-map-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-.flow-map-card { position: absolute; display: flex; flex-direction: column; gap: 7px; padding: 13px 15px; text-align: left; border: 1px solid var(--flow-border); border-radius: 12px; background: var(--flow-panel); color: var(--explorer-fg); line-height: 1.45; height: 108px; overflow: hidden; }
-.flow-map-card strong { font-size: 15px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-explorer svg.flow-explorer-map-wires, .flow-overview svg.flow-explorer-map-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.flow-map-card { position: absolute; display: flex; flex-direction: column; gap: 6px; padding: 11px 13px; text-align: left; border: 1px solid var(--flow-border); border-radius: 12px; background: var(--flow-panel); color: var(--explorer-fg); line-height: 1.45; height: 96px; overflow: hidden; }
+.flow-map-card strong { font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-map-card > span:last-child { font-size: 11px; color: var(--flow-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .flow-map-card .flow-map-card-kind { font-size: 10px; color: var(--flow-muted); }
 .flow-map-card[aria-current=step] { border-color: var(--flow-cyan); background: color-mix(in srgb, var(--flow-cyan) 10%, var(--flow-panel)); }
@@ -520,6 +522,11 @@
 .flow-explorer-map .flow-map-edge[data-active=true] .flow-map-edge-glow { stroke-width: 10; stroke-opacity: .28; }
 .flow-explorer-map[data-playback=paused] .flow-map-spark, .flow-explorer-map[data-playback=complete] .flow-map-spark { animation-play-state: paused; }
 .flow-explorer-map[data-playback=complete] .flow-map-spark { opacity: 0; }
+.flow-explorer-map[data-playback=failed] .flow-map-spark { animation-play-state: paused; opacity: 0; }
+.flow-explorer-map[data-playback=failed] .flow-map-edge { opacity: .22; }
+.flow-map-card[data-demo-state=playing] { border-color: var(--flow-cyan); background: color-mix(in srgb, var(--flow-cyan) 15%, var(--flow-panel)); }
+.flow-map-card[data-demo-state=failed], .flow-explorer-demo-output[data-outcome=failure] { border-color: var(--flow-amber); }
+.flow-map-card[data-demo-state=failed] strong, .flow-explorer-demo-steps li[data-state=failed] :is(strong, span) { color: var(--flow-amber); }
 .flow-explorer-focus { margin-top: 12px; }
 .flow-mode[data-flow-theme=light] .flow-map-edge-glow { stroke-opacity: .12; }
 .flow-mode[data-flow-theme=light] .flow-map-edge-line { stroke-opacity: .65; }

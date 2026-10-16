@@ -156,3 +156,27 @@ async def test_type_error_details_never_reach_worker_logs_or_persisted_failure(m
     assert private_marker not in caplog.text
     assert private_marker not in repr(db.rows)
     assert private_marker not in repr(db.events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('code', 'category'), [
+    ('insufficient_quota', 'provider_quota_exhausted'),
+    ('rate_limit_exceeded', 'provider_rate_limited'),
+])
+async def test_provider_failure_is_classified_without_replaying_or_leaking_details(monkeypatch, caplog, code, category):
+    db = QueueDB(1)
+    run = (await db.rpc('claim_evaluation', {'p_worker': 'owner'}))[0]
+    calls = []
+    failure = type('RateLimitError', (Exception,), {})('private provider request')
+    failure.code = code
+
+    async def evaluate(*args):
+        calls.append(True)
+        raise failure
+
+    monkeypatch.setattr(worker, 'execute', evaluate)
+    await worker.process(db, None, config(), run, 'owner', None)
+    assert calls == [True]
+    assert db.rows['0']['failure_reason'] == category
+    assert 'private provider request' not in caplog.text
+    assert 'private provider request' not in repr(db.rows)

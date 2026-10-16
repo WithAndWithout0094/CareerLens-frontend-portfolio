@@ -1,7 +1,8 @@
 import { FLOW_GRAPH, summaryObservation, overviewConnections, analysisDomains } from './explorer-model.js';
 import { makeNodeDemo, createExplorerPlayback } from './explorer-demo.js';
 import { flowEventLabel } from './catalog.js';
-import { buildExplorerMap, explorerMapMarkup, mountExplorerMap, mountMapVisibility, mountOverviewWires, MAP_CARD } from './explorer-map.js';
+import { buildExplorerMap, explorerMapMarkup, mountExplorerMap, mountMapVisibility, MAP_CARD } from './explorer-map.js';
+import { buildOverviewMap, overviewMapMarkup, mountOverviewMap } from './overview-map.js';
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const arrow = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 10h14m-5-5 5 5-5 5"/></svg>';
@@ -10,9 +11,8 @@ const relationship = { flow: '처리 순서', conditional: '조건 분기', call
 export function overviewMarkup(graph = FLOW_GRAPH) {
   return `<section class="flow-overview" aria-label="서비스 흐름 요약" data-flow-overview>
     <header><div><h2>처음부터 결과까지, 흐름을 펼쳐보세요</h2><p data-overview-state-copy>카드를 선택하면 연결된 단계와 기능별 시연이 열립니다. 아래 상태는 선택한 관찰 대상의 실제 기록입니다.</p></div><button type="button" data-flow-explore="overview:analysis">분석 구조 살펴보기 ${arrow}</button></header>
-    <div class="flow-overview-stages">${graph.overview.map((group, index) => `<button type="button" class="flow-overview-card" data-flow-explore="${esc(group.id)}" data-summary-node="${esc(group.id)}" aria-haspopup="dialog"><span class="flow-overview-order">${String(index + 1).padStart(2, '0')}</span><strong>${esc(group.label)}</strong><span>${esc(group.description)}</span><span class="flow-overview-state" data-summary-status>수집된 기록 없음</span><span class="flow-overview-open">세부 흐름 · 시연 ${arrow}</span></button>`).join('')}</div>
-    <p class="flow-overview-motion-note">빛은 코드 연결 방향을 안내합니다. 실제 이용 상태는 각 카드의 기록과 구분됩니다.</p>
-    <details class="flow-overview-relations"><summary>요약 단계의 코드 연결 관계 보기</summary><ul>${overviewConnections(graph).map(([from, to]) => `<li><button type="button" data-flow-explore="${esc(from)}">${esc(graph.node(from).label)}</button>${arrow}<button type="button" data-flow-explore="${esc(to)}">${esc(graph.node(to).label)}</button></li>`).join('')}</ul><p>번호는 탐색 순서입니다. 실제 호출·분기 관계는 위 목록과 각 카드의 세부 흐름을 기준으로 합니다.</p></details>
+    ${overviewMapMarkup(buildOverviewMap(graph))}
+    <details class="flow-overview-relations"><summary>전체 연결 관계 보기</summary><ul>${overviewConnections(graph).map(([from, to]) => `<li><button type="button" data-flow-explore="${esc(from)}">${esc(graph.node(from).label)}</button>${arrow}<button type="button" data-flow-explore="${esc(to)}">${esc(graph.node(to).label)}</button></li>`).join('')}</ul><p>카드 위치는 이용 단계를 구분합니다. 선은 실제 코드의 처리·호출 관계이며, 실제 이용 상태는 카드의 관찰 기록에서 확인합니다.</p></details>
     <p class="flow-source-version">코드에서 생성한 기능 ${graph.nodes.size}개 · 연결 ${graph.edges.length}개 · 소스 ${esc(graph.manifest.sourceDigest?.slice(0, 10) || '확인 불가')} <span>코드 변경 후 빌드할 때 갱신됩니다.</span></p>
   </section>`;
 }
@@ -42,7 +42,7 @@ export function mountFlowExplorer(host, { graph = FLOW_GRAPH } = {}) {
   let currentDemo = null;
   let mapController = null, expanded = false;
   const views = new Map(), scrollPositions = new Map();
-  const disposeOverview = mountOverviewWires(host, graph);
+  const disposeOverview = mountOverviewMap(host, graph);
   const disposeVisibility = mountMapVisibility(dialog);
   const playback = createExplorerPlayback({ schedule: (fn, ms) => win.setTimeout(fn, ms), cancel: (id) => win.clearTimeout(id), onChange: renderDemoState });
   const selected = () => history.at(-1);
@@ -90,17 +90,18 @@ export function mountFlowExplorer(host, { graph = FLOW_GRAPH } = {}) {
     mapController?.setPlayback(state);
     dialog.querySelectorAll('[data-explore-step]').forEach((item) => {
       const index = Number(item.dataset.exploreStep);
-      item.dataset.state = index < state.index || state.status === 'complete' ? 'complete' : index === state.index ? 'running' : 'waiting';
-      item.querySelector('[data-explore-step-state]').textContent = index < state.index || state.status === 'complete' ? '예시 처리 완료' : index === state.index ? (state.status === 'paused' ? '일시정지' : '시연 중') : '대기';
+      const failed = state.status === 'failed' && index === state.index;
+      item.dataset.state = failed ? 'failed' : index < state.index || state.status === 'complete' ? 'complete' : index === state.index ? 'running' : 'waiting';
+      item.querySelector('[data-explore-step-state]').textContent = failed ? '오류 안내 · 종료' : index < state.index || state.status === 'complete' ? '예시 처리 완료' : index === state.index ? (state.status === 'paused' ? '일시정지' : '시연 중') : '대기';
     });
     const status = dialog.querySelector('[data-explore-demo-status]');
     if (!status) return;
-    status.textContent = state.status === 'complete' ? '시연 완료 · 기능 시연에서 출력을 확인하세요.' : state.status === 'paused' ? '일시정지 · 이어서 재생할 수 있습니다.' : state.status === 'playing' ? `${state.demo.steps[state.index].label} · 가상 시연 중` : '가상 시연 · 실제 요청은 보내지 않습니다.';
+    status.textContent = state.status === 'failed' ? '오류 예시 종료 · 기능 시연에서 오류 안내를 확인하세요.' : state.status === 'complete' ? '시연 완료 · 기능 시연에서 출력을 확인하세요.' : state.status === 'paused' ? '일시정지 · 이어서 재생할 수 있습니다.' : state.status === 'playing' ? `${state.demo.steps[state.index].label} · 가상 시연 중` : '가상 시연 · 실제 요청은 보내지 않습니다.';
     const play = dialog.querySelector('[data-explore-play]');
-    play.disabled = state.status === 'playing'; play.textContent = state.status === 'paused' ? '이어서 재생' : state.status === 'complete' ? '다시 시연' : '시연 시작';
+    play.disabled = state.status === 'playing'; play.textContent = state.status === 'paused' ? '이어서 재생' : ['complete', 'failed'].includes(state.status) ? '다시 시연' : '시연 시작';
     dialog.querySelector('[data-explore-pause]').disabled = state.status !== 'playing';
     const output = dialog.querySelector('[data-explore-output]');
-    if (output) output.hidden = state.status !== 'complete';
+    if (output) { output.hidden = !['complete', 'failed'].includes(state.status); output.dataset.outcome = state.status === 'failed' ? 'failure' : 'success'; }
   }
   function renderSidebarList() {
     const list = dialog.querySelector('[data-explore-list]');

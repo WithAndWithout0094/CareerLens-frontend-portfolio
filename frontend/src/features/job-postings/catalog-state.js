@@ -23,7 +23,7 @@ export function catalogRoute(hash) {
   const [path, query = ''] = hash.replace(/^#\//, '').split('?');
   if (path === 'jobs') return { kind: 'list', query: new URLSearchParams(query) };
   const context = catalogQuery(new URLSearchParams(query));
-  const navigation = context.has('return_to') ? { query: context } : {};
+  const navigation = catalogPath('jobs', context) !== 'jobs' ? { query: context } : {};
   if (path === 'jobs/new') return { kind: 'new', ...navigation };
   const match = /^jobs\/([^/]+)(\/edit)?$/.exec(path);
   if (!match) return null;
@@ -47,8 +47,13 @@ export function catalogReturnPath(value) {
 }
 
 export function catalogPath(path, input) {
-  if (!catalogReturnPath(input?.get('return_to'))) return path;
-  return `${path}?${catalogQuery(input)}`;
+  if (!input) return path;
+  const query = catalogQuery(input);
+  // A standalone search has the same return context as a role-led search.
+  // Keep plain links plain when there are no filters or non-default page.
+  const hasContext = query.get('page') !== '1' ||
+    [...query.keys()].some((key) => !['page', 'page_size'].includes(key));
+  return hasContext ? `${path}?${query}` : path;
 }
 
 export function catalogQuery(input) {

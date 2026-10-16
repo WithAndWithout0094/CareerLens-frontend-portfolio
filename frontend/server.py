@@ -495,11 +495,21 @@ def create_app(backend_url=None, *, integrated=False, internal_backend=False):
     install_job_catalog(app, origin, opener, verify_guest_report_owner)
 
     default_store = (Path(gettempdir()) / "careerlens-frontend" if on_vercel else ROOT / ".runtime") / "guest-reports.sqlite3"
+    member_archive = None
+    if integrated:
+        # The integrated service owns this database and its verified account IDs.
+        # A standalone proxy must never use a possibly unrelated local database.
+        from app.core.config import settings
+        from frontend.member_report_archive import PostgresMemberReportArchive
+        archive_dsn = settings().database_url.get_secret_value()
+        if archive_dsn:
+            member_archive = PostgresMemberReportArchive(archive_dsn)
     guest_api = create_guest_blueprint(
         Path(os.environ.get("CAREERLENS_GUEST_STORE_PATH", str(default_store))),
         fetch_job=guest_catalog_job,
         verify_user=verify_guest_report_owner,
         available=lambda: bool(origin) and os.environ.get("CAREERLENS_GUEST_ANALYSIS", "1") != "0" and engine_available(),
+        member_archive=member_archive,
     )
     app.register_blueprint(guest_api)
     app.extensions["guest_analysis"] = guest_api.guest_service

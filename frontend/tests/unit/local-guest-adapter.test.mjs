@@ -41,7 +41,7 @@ function harness(overrides = {}) {
     if (path === '/local-guest/analyses/guest-run/claim') return result();
     if (path === '/local-guest/analyses/guest-run/cancel') return { cancelled: true };
     if (path === '/local-guest/analyses/cancel-pending') return { cancelled: true };
-    if (path === '/local-guest/reports') return { reports: [metadata({ title: 'QA engineer', company_name: 'Fixture' })] };
+    if (path === '/local-guest/reports' || path === '/local-guest/reports?limit=20&offset=0') return { reports: [metadata({ title: 'QA engineer', company_name: 'Fixture' })] };
     if (path === '/local-guest/reports/guest-run') return options.method === 'DELETE' ? { deleted: true } : result();
     if (path === '/me') return { user_id: MEMBER };
     if (path === '/resumes?limit=100' || path.startsWith('/evaluations?')) return [];
@@ -55,6 +55,28 @@ beforeEach(() => {
     getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, String(value)), removeItem: (key) => data.delete(key) };
   enableBackendAdapter();
 });
+
+test('a failed durable claim leaves the guest result available and never creates a saved workspace', async () => {
+  const { api } = harness({ '/local-guest/analyses/guest-run/claim': () => {
+    throw new ApiError('Private database detail', 503, 'report_archive_unavailable');
+  } });
+  stage({ completed: true, local_run: { id: 'guest-run', status: 'completed', idempotency_key: 'fixed' } });
+  sessionStorage.setItem(TOKEN, 'owner-token');
+  await assert.rejects(api('/guest/claim', { method: 'POST' }), { code: 'report_archive_unavailable' });
+  assert.equal(stored(WORKSPACE), null);
+  assert.equal(stored(GUEST).local_run.id, 'guest-run');
+});
+
+for (const code of ['provider_quota_exhausted', 'provider_rate_limited', 'provider_access_unavailable']) {
+  test(`guest failure preserves the fixed ${code} reason without retrying analysis`, async () => {
+    stage({ local_run: { id: 'guest-run', status: 'running', idempotency_key: 'fixed' } });
+    const { api, calls } = harness({ '/local-guest/analyses/guest-run': () => metadata({
+      status: 'failed', completed: false, current_stage: 'failed', failure_code: code,
+    }) });
+    await assert.rejects(api('/guest/analysis', { method: 'POST' }), { code });
+    assert.equal(calls.some(({ path }) => path === '/local-guest/analyses'), false);
+  });
+}
 
 for (const status of ['failed', 'cancelled']) {
   test(`an explicit retry after a ${status} guest run gets one new intent without extending its expiry`, async () => {
@@ -226,7 +248,7 @@ test('claim and stored local-report operations survive verified token renewal fo
   const refresh = () => storeBackendCredentials({ access_token: `renewed-owner-${++renewal}` }, captureBackendSession());
   const { api, calls } = harness({
     '/local-guest/analyses/guest-run/claim': () => { refresh(); return result(); },
-    '/local-guest/reports': () => { refresh(); return { reports: [metadata()] }; },
+    '/local-guest/reports?limit=20&offset=0': () => { refresh(); return { reports: [metadata()] }; },
     '/local-guest/reports/guest-run': (options) => { refresh(); return options.method === 'DELETE' ? { deleted: true } : result(); },
   });
   sessionStorage.setItem(TOKEN, 'owner-token');
@@ -302,7 +324,7 @@ test('deleting guest workspace deletes server temporary analysis while dropping 
 });
 
 test('owned local reports appear with existing reports and support direct read/context/delete', async () => {
-  const { api, calls } = harness({ '/evaluations?limit=20&offset=0': () => [
+  const { api, calls } = harness({ '/evaluations?limit=20&offset=0&completed_only=true': () => [
     { id: 'backend-run', status: 'completed', created_at: '2026-10-10T00:00:00Z' },
   ] });
   sessionStorage.setItem(TOKEN, 'owner-token');

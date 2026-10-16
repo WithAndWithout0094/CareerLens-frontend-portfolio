@@ -34,7 +34,7 @@ async function harness(intercept = () => null) {
     if (ready) await intercept(path, options);
     if (path === '/local-guest/capabilities') return { available: true, storage_origin: 'frontend_guest' };
     if (path === '/me') return { user_id: 'account-a' };
-    if (path === '/resumes?limit=100' || path === '/evaluations?limit=1') return [];
+    if (path === '/resumes?limit=100' || path === '/evaluations?limit=1&completed_only=true') return [];
     if (path === '/local-guest/reports') return { reports: [report] };
     if (path === '/local-guest/reports/stored-run') return report;
     assert.fail(`Unexpected request ${path}`);
@@ -45,7 +45,7 @@ async function harness(intercept = () => null) {
   return { calls, load: (options = {}) => backendApi('/workspace', options, request, ApiError) };
 }
 
-for (const boundary of ['/me', '/resumes?limit=100', '/evaluations?limit=1', '/local-guest/reports', '/local-guest/reports/stored-run']) {
+for (const boundary of ['/me', '/resumes?limit=100', '/evaluations?limit=1&completed_only=true', '/local-guest/reports', '/local-guest/reports/stored-run']) {
   test(`workspace stops at account switch during ${boundary} without writing another account's state`, async () => {
     let release;
     let entered;

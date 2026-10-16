@@ -102,3 +102,22 @@ export function overviewConnections(graph = FLOW_GRAPH) {
   }
   return [...found].map((entry) => entry.split('\u0000'));
 }
+
+// Keep the source kinds when summarising. A shared auth helper or response
+// schema is a dependency, not another step in a user's analysis journey.
+export function overviewRelations(graph = FLOW_GRAPH) {
+  const relations = new Map();
+  for (const edge of graph.links) {
+    const from = graph.groupFor(edge.from), to = graph.groupFor(edge.to);
+    if (!from || !to || from.id === to.id) continue;
+    const key = `${from.id}\u0000${to.id}`;
+    if (!relations.has(key)) relations.set(key, { from: from.id, to: to.id, kinds: [], sourceEdges: [] });
+    const relation = relations.get(key);
+    if (!relation.kinds.includes(edge.kind)) relation.kinds.push(edge.kind);
+    relation.sourceEdges.push(edge);
+  }
+  return [...relations.values()].map((relation) => ({ ...relation,
+    kind: ['flow', 'conditional', 'calls', 'produces'].find((kind) => relation.kinds.includes(kind)) || relation.kinds[0],
+    primary: relation.kinds.some((kind) => kind === 'flow' || kind === 'conditional'),
+  }));
+}

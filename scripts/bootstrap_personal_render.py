@@ -99,9 +99,10 @@ async def main():
         ) as conn:
             await bootstrap(conn, schema)
             # Additive portfolio migration, separate from the immutable bootstrap fingerprint.
-            migration = (ROOT / 'migrations/render/001_admin_execution_imports.sql').read_text(encoding='utf-8')
-            async with conn.transaction():
-                await conn.execute(migration, prepare=False)
+            for filename in ('001_admin_execution_imports.sql', '002_member_guest_reports.sql'):
+                migration = (ROOT / 'migrations/render' / filename).read_text(encoding='utf-8')
+                async with conn.transaction():
+                    await conn.execute(migration, prepare=False)
             print('Personal portfolio schema ready; existing records retained.')
     except BootstrapRefused as error:
         print(str(error))

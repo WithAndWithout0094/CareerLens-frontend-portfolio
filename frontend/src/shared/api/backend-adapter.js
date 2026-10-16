@@ -357,7 +357,7 @@ async function runGuestAnalysis(request, signal, onProgress) {
     if (guest.completed) return sessionMockWorkspace();
     if (['failed', 'cancelled'].includes(guest.local_run.status))
       error(request.ApiError, '분석을 완료하지 못했습니다. 다시 시도해 주세요.', 502,
-        guest.local_run.status === 'cancelled' ? 'evaluation_cancelled' : 'evaluation_failed');
+        guest.local_run.status === 'cancelled' ? 'evaluation_cancelled' : evaluationFailureCode(update.failure_code));
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, 2000);
       function abort() { clearTimeout(timer); reject(new DOMException('요청이 취소되었습니다.', 'AbortError')); }
@@ -370,6 +370,13 @@ async function runGuestAnalysis(request, signal, onProgress) {
 
 function error(ApiError, message, status = 501, code = 'backend_feature_unavailable') {
   throw new ApiError(message, status, code);
+}
+
+function evaluationFailureCode(reason) {
+  if (['provider_quota_exhausted', 'provider_rate_limited', 'provider_access_unavailable'].includes(reason))
+    return reason;
+  // Old jobs saved only their exception type; do not guess quota exhaustion.
+  return reason === 'RateLimitError' ? 'provider_rate_limited' : 'evaluation_failed';
 }
 
 function mockReport({ company, role }) {
@@ -873,7 +880,7 @@ async function savedReportList(path, request, signal, ApiError) {
   requireReportSession(ApiError);
   const hasLocalReports = localGuestStores.get(request) === true;
   request = ownerBoundRequest(request, signal).request;
-  const runs = await request(`/evaluations?limit=${REPORT_PAGE_SIZE}&offset=${offset}`, { signal });
+  const runs = await request(`/evaluations?limit=${REPORT_PAGE_SIZE}&offset=${offset}&completed_only=true`, { signal });
   if (
     !Array.isArray(runs) ||
     runs.some(
@@ -886,14 +893,19 @@ async function savedReportList(path, request, signal, ApiError) {
     )
   )
     error(ApiError, '저장한 보고서 목록 형식이 올바르지 않습니다.', 502, 'report_list_invalid');
-  const nextOffset = runs.length === REPORT_PAGE_SIZE ? offset + REPORT_PAGE_SIZE : null;
+  let nextOffset = runs.length === REPORT_PAGE_SIZE ? offset + REPORT_PAGE_SIZE : null;
   if (nextOffset !== null && !Number.isSafeInteger(nextOffset))
     error(ApiError, '보고서의 다음 목록 위치가 올바르지 않습니다.', 502, 'report_offset_invalid');
   let localItems = [];
-  if (offset === 0 && hasLocalReports) {
-    const response = await request('/local-guest/reports', { signal });
+  if (hasLocalReports) {
+    const response = await request(`/local-guest/reports?limit=${REPORT_PAGE_SIZE}&offset=${offset}`, { signal });
     if (!Array.isArray(response.reports))
       error(ApiError, '저장한 보고서 목록 형식이 올바르지 않습니다.', 502, 'report_list_invalid');
+    if (response.next_offset != null) {
+      if (!Number.isSafeInteger(response.next_offset) || response.next_offset !== offset + REPORT_PAGE_SIZE)
+        error(ApiError, '보고서의 다음 목록 위치가 올바르지 않습니다.', 502, 'report_offset_invalid');
+      nextOffset = response.next_offset;
+    }
     localItems = response.reports.filter((item) => ['completed', 'partial'].includes(item.status))
       .map((item) => ({ id: `${LOCAL_GUEST_PREFIX}${item.run_id}`, status: item.status,
         created_at: item.created_at, storage_origin: 'frontend_guest', can_delete: true,
@@ -1193,7 +1205,7 @@ async function getMemberWorkspace(request, signal) {
   const restoreLatest = !state.report && !state.suppress_latest_report && !state.pending_guest_analysis;
   if (restoreLatest) {
     try {
-      const runs = await request('/evaluations?limit=1', { signal });
+      const runs = await request('/evaluations?limit=1&completed_only=true', { signal });
       if (runs[0] && ['completed', 'partial'].includes(runs[0].status)) {
         const result = await request(`/evaluations/${encodeURIComponent(runs[0].id)}/result`, {
           signal,
@@ -1374,7 +1386,7 @@ async function runBackendAnalysis(request, signal, onProgress) {
           ? '분석이 취소되었습니다. 공고를 선택해 다시 시작할 수 있습니다.'
           : '분석을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.',
         502,
-        status.status === 'cancelled' ? 'evaluation_cancelled' : 'evaluation_failed',
+        status.status === 'cancelled' ? 'evaluation_cancelled' : evaluationFailureCode(status.failure_reason),
       );
     }
     if (['completed', 'partial'].includes(status.status)) {

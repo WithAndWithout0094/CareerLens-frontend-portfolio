@@ -2,7 +2,7 @@ import { overviewConnections } from './explorer-model.js';
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 export const MAP_LIMITS = Object.freeze({ min: 0.22, max: 2 });
-export const MAP_CARD = Object.freeze({ width: 228, height: 108, column: 340, row: 138 });
+export const MAP_CARD = Object.freeze({ width: 208, height: 96, column: 304, row: 126 });
 const composition = (kind) => ['contains', 'containment', 'schema', 'field', 'group'].includes(kind);
 const relationNames = { flow: '처리 순서', conditional: '조건 분기', calls: '함수 호출', contains: '하위 구성', produces: '응답 구조', group: '요약 구성', projected: '요약 간 코드 연결' };
 
@@ -124,7 +124,9 @@ export function mountExplorerMap(root, model, { initialView = null, onView = () 
     if (!viewport.clientWidth || !viewport.clientHeight) return;
     const scale = Math.max(MAP_LIMITS.min, Math.min(1, (viewport.clientWidth - 40) / model.width, (viewport.clientHeight - 40) / model.height));
     const focus = model.nodes.find((node) => node.selected);
-    view = initial && scale < .55 && focus
+    view = initial && scale < .65 && model.overview
+      ? { scale: .85, x: 20 - (model.nodes[0]?.x || 0) * .85, y: (viewport.clientHeight - model.height * .85) / 2 }
+      : initial && scale < .55 && focus
       ? { scale: .7, x: viewport.clientWidth / 2 - (focus.x + MAP_CARD.width / 2) * .7, y: viewport.clientHeight / 2 - (focus.y + MAP_CARD.height / 2) * .7 }
       : { scale, x: (viewport.clientWidth - model.width * scale) / 2, y: (viewport.clientHeight - model.height * scale) / 2 }; apply();
   }
@@ -158,8 +160,9 @@ export function mountExplorerMap(root, model, { initialView = null, onView = () 
   const focusin = (event) => {
     const card = event.target.closest('[data-map-node]'); if (!card || !view) return;
     const node = model.nodes.find((entry) => entry.id === card.dataset.mapNode), box = viewport.getBoundingClientRect(), bounds = card.getBoundingClientRect();
-    if (bounds.left < box.left || bounds.right > box.right || bounds.top < box.top || bounds.bottom > box.bottom) {
-      view = { ...view, x: viewport.clientWidth / 2 - (node.x + MAP_CARD.width / 2) * view.scale, y: viewport.clientHeight / 2 - (node.y + MAP_CARD.height / 2) * view.scale }; apply();
+    if (view.scale < .65 || bounds.left < box.left || bounds.right > box.right || bounds.top < box.top || bounds.bottom > box.bottom) {
+      const scale = Math.max(.8, view.scale);
+      view = { scale, x: viewport.clientWidth / 2 - (node.x + (node.width || MAP_CARD.width) / 2) * scale, y: viewport.clientHeight / 2 - (node.y + (node.height || MAP_CARD.height) / 2) * scale }; apply();
     }
   };
   viewport.addEventListener('wheel', wheel, { passive: false }); viewport.addEventListener('pointerdown', down); viewport.addEventListener('pointermove', move); viewport.addEventListener('pointerup', up); viewport.addEventListener('pointercancel', up); viewport.addEventListener('click', preventDragClick, true); viewport.addEventListener('keydown', keydown); viewport.addEventListener('focusin', focusin); root.addEventListener('click', click);
@@ -170,11 +173,12 @@ export function mountExplorerMap(root, model, { initialView = null, onView = () 
     anchor: () => { const node = model.nodes.find((entry) => entry.selected); return node ? { x: node.x + MAP_CARD.width / 2, y: node.y + MAP_CARD.height / 2 } : null; },
     setPlayback(state) {
       root.dataset.playback = state.status;
-      root.querySelector('[data-map-motion-label]').textContent = state.status === 'playing' ? '가상 시연 · 입력 → 선택 기능 → 출력 관계를 강조합니다.' : state.status === 'paused' ? '가상 시연 일시정지 · 현재 단계 유지' : '빛의 이동은 코드 연결 방향 안내입니다. 실제 실행 기록이 아닙니다.';
+      root.querySelector('[data-map-motion-label]').textContent = state.status === 'failed' ? '가상 오류로 종료했습니다. 다음 처리로 진행하지 않습니다.' : state.status === 'playing' ? `가상 시연 · ${['입력 관계 확인', '선택 기능 처리', '출력 관계 확인'][state.index] || '준비'}` : state.status === 'paused' ? '가상 시연 일시정지 · 현재 단계 유지' : '빛의 이동은 코드 연결 방향 안내입니다. 실제 실행 기록이 아닙니다.';
       for (const edge of root.querySelectorAll('[data-map-edge]')) {
         const incoming = edge.dataset.mapTo === state.nodeId, outgoing = edge.dataset.mapFrom === state.nodeId;
-        edge.dataset.active = String(state.status !== 'idle' && (state.index === 0 ? incoming : state.index === 1 ? incoming || outgoing : outgoing));
+        edge.dataset.active = String(!['idle', 'failed'].includes(state.status) && (state.index === 0 ? incoming : state.index === 1 ? false : outgoing));
       }
+      for (const card of root.querySelectorAll('[data-map-node]')) card.dataset.demoState = card.dataset.mapNode === state.nodeId ? state.status : 'idle';
     },
     destroy() { disposed = true; observer?.disconnect(); viewport.removeEventListener('wheel', wheel); viewport.removeEventListener('pointerdown', down); viewport.removeEventListener('pointermove', move); viewport.removeEventListener('pointerup', up); viewport.removeEventListener('pointercancel', up); viewport.removeEventListener('click', preventDragClick, true); viewport.removeEventListener('keydown', keydown); viewport.removeEventListener('focusin', focusin); root.removeEventListener('click', click); },
   };
@@ -193,24 +197,3 @@ export function mountMapVisibility(root) {
   return () => { intersection?.disconnect(); mutation.disconnect(); doc.removeEventListener('visibilitychange', update); query.removeEventListener?.('change', update); };
 }
 
-export function mountOverviewWires(root, graph) {
-  const stages = root.querySelector('.flow-overview-stages');
-  if (!stages) return () => {};
-  const doc = root.ownerDocument, win = doc.defaultView, svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.classList.add('flow-overview-wires'); svg.setAttribute('aria-hidden', 'true'); stages.prepend(svg);
-  function measure() {
-    const area = stages.getBoundingClientRect(); if (!area.width) return;
-    svg.setAttribute('width', area.width); svg.setAttribute('height', area.height);
-    const boxes = new Map([...stages.querySelectorAll('[data-summary-node]')].map((card) => { const box = card.getBoundingClientRect(); return [card.dataset.summaryNode, { x: box.left - area.left, y: box.top - area.top, width: box.width, height: box.height }]; }));
-    svg.innerHTML = overviewConnections(graph).map(([from, to], index) => {
-      const a = boxes.get(from), b = boxes.get(to); if (!a || !b) return '';
-      const x1 = a.x + a.width / 2, x2 = b.x + b.width / 2, y1 = a.y + a.height, y2 = b.y + b.height;
-      const lane = Math.max(y1, y2) + 20 + index % 4 * 9;
-      return edgeMarkup({ from, to, kind: 'projected' }, `M${x1},${y1} C${x1},${lane} ${x2},${lane} ${x2},${y2}`, index);
-    }).join('');
-  }
-  const observer = win.ResizeObserver ? new win.ResizeObserver(measure) : null;
-  observer?.observe(stages); win.addEventListener('resize', measure, { passive: true });
-  const disposeVisibility = mountMapVisibility(stages); measure();
-  return () => { observer?.disconnect(); win.removeEventListener('resize', measure); disposeVisibility(); svg.remove(); };
-}
