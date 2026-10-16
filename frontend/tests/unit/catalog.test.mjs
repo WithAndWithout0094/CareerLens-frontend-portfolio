@@ -352,7 +352,18 @@ test('explicit demo retains tab-only posting and bookmark controls', () => {
   );
   const detail = jobDetailPage(local, user);
   const editor = postingEditorPage(local, local.id, undefined, user);
-  assert.ok(list.includes('href="#/jobs/new"'));
+  const createLink = linkForLabel(list, '공고 직접 입력');
+  assert.equal(catalogRoute(createLink).kind, 'new');
+  const createQuery = new URLSearchParams(createLink.split('?')[1]);
+  assert.equal(createQuery.get('saved'), '1');
+  assert.equal(createQuery.get('page'), '1');
+  assert.equal(createQuery.get('page_size'), '12');
+  const unfilteredList = jobListPage(
+    { items: [local], total: 1, page: 1, page_size: 12 },
+    new URLSearchParams(),
+    user,
+  );
+  assert.equal(linkForLabel(unfilteredList, '공고 직접 입력'), '#/jobs/new');
   assert.ok(list.includes('시연 저장 공고만'));
   assert.match(list, /name="saved"\s+value="1"\s+checked/);
   for (const html of [list, detail]) {
