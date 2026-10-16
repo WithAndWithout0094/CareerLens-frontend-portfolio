@@ -117,7 +117,7 @@ export function overviewRelations(graph = FLOW_GRAPH) {
     relation.sourceEdges.push(edge);
   }
   return [...relations.values()].map((relation) => ({ ...relation,
-    kind: ['flow', 'conditional', 'calls', 'produces'].find((kind) => relation.kinds.includes(kind)) || relation.kinds[0],
-    primary: relation.kinds.some((kind) => kind === 'flow' || kind === 'conditional'),
+    kind: ['flow', 'conditional', 'interaction', 'navigation', 'calls', 'produces'].find((kind) => relation.kinds.includes(kind)) || relation.kinds[0],
+    primary: relation.kinds.some((kind) => ['flow', 'conditional', 'interaction', 'navigation'].includes(kind)),
   }));
 }

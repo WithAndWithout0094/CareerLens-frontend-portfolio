@@ -4,7 +4,7 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':
 export const MAP_LIMITS = Object.freeze({ min: 0.22, max: 2 });
 export const MAP_CARD = Object.freeze({ width: 208, height: 96, column: 304, row: 126 });
 const composition = (kind) => ['contains', 'containment', 'schema', 'field', 'group'].includes(kind);
-const relationNames = { flow: '처리 순서', conditional: '조건 분기', calls: '함수 호출', contains: '하위 구성', produces: '응답 구조', group: '요약 구성', projected: '요약 간 코드 연결' };
+const relationNames = { flow: '처리 순서', conditional: '조건 분기', interaction: '사용자 동작', navigation: '화면 이동', calls: '함수 호출', contains: '하위 구성', produces: '응답 구조', group: '요약 구성', projected: '요약 간 코드 연결' };
 
 // The canvas never invents a sequential chain. Every solid edge comes from a
 // manifest edge, or an explicitly labelled projection between overview groups.

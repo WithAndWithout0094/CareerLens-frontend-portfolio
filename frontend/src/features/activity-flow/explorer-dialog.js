@@ -6,7 +6,7 @@ import { buildOverviewMap, overviewMapMarkup, mountOverviewMap } from './overvie
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const arrow = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 10h14m-5-5 5 5-5 5"/></svg>';
-const relationship = { flow: '처리 순서', conditional: '조건 분기', calls: '함수 호출', contains: '하위 구성', produces: '응답 형식' };
+const relationship = { flow: '처리 순서', conditional: '조건 분기', interaction: '사용자 동작', navigation: '화면 이동', calls: '함수 호출', contains: '하위 구성', produces: '응답 형식' };
 
 export function overviewMarkup(graph = FLOW_GRAPH) {
   return `<section class="flow-overview" aria-label="서비스 흐름 요약" data-flow-overview>

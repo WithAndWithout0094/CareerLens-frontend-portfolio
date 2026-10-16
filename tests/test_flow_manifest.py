@@ -140,6 +140,52 @@ def test_existing_criterion_semantics_change_without_changing_its_identity(check
     assert nodes['criterion:C2']['parentId'] == 'domain_c'
 
 
+def test_user_flow_edges_come_from_real_navigation_and_selection_handlers(checkout):
+    original = generate(checkout)
+    edges = {(edge['from'], edge['to'], edge['kind']): edge for edge in original['edges']}
+    expected = {
+        ('visit', 'resume', 'navigation'),
+        ('resume', 'role', 'navigation'),
+        ('posting', 'evaluate', 'interaction'),
+        ('history', 'dashboard', 'navigation'),
+    }
+    assert expected <= edges.keys()
+    for key in expected:
+        assert edges[key]['sourceRefs']
+        assert all(ref['path'].startswith('frontend/src/') for ref in edges[key]['sourceRefs'])
+
+    # Actual destinations/observations change, not a parallel graph fixture.
+    replace(checkout, 'frontend/src/app/main.js',
+            "onComplete: () => navigate('resume')", "onComplete: () => navigate('desired-role')")
+    replace(checkout, 'frontend/src/app/main.js',
+            "recordFlowEvent('posting', { source: session.user?.demo === true ? 'demo' : 'observed' });",
+            "recordFlowEvent('role', { source: session.user?.demo === true ? 'demo' : 'observed' });")
+    replace(checkout, 'frontend/src/pages/my-page.js', 'href="#/admin"', 'href="#/resume"')
+    changed = generate(checkout)
+    changed_edges = {(edge['from'], edge['to'], edge['kind']) for edge in changed['edges']}
+    assert ('visit', 'role', 'navigation') in changed_edges
+    assert ('visit', 'resume', 'navigation') not in changed_edges
+    assert ('role', 'evaluate', 'interaction') in changed_edges
+    assert ('posting', 'evaluate', 'interaction') not in changed_edges
+    assert ('history', 'dashboard', 'navigation') not in changed_edges
+
+
+def test_form_navigation_removal_removes_overview_connection_without_guessing_a_replacement(checkout):
+    main = checkout / 'frontend/src/app/main.js'
+    source = main.read_text(encoding='utf-8')
+    main.write_text(source.replace("navigate('desired-role')", "navigate('resume')"), encoding='utf-8')
+    manifest = generate(checkout)
+    assert not any(edge['from'] == 'resume' and edge['to'] == 'role' and edge['kind'] == 'navigation'
+                   for edge in manifest['edges'])
+
+
+def test_unknown_static_route_in_supported_handler_fails_instead_of_shipping_stale_journey(checkout):
+    replace(checkout, 'frontend/src/app/main.js',
+            "onComplete: () => navigate('resume')", "onComplete: () => navigate('not-classified')")
+    result = generate(checkout, success=False)
+    assert 'unclassified route' in result.stderr
+
+
 @pytest.mark.parametrize('path,before,after', [
     ('app/agent/graphs/matching.py', "graph.add_edge('calculate', END)", "graph.add_edge('missing_source_node', END)"),
     ('app/api/v1/routes/api.py', 'response_model=RunStatus', 'response_model=MissingSchema'),

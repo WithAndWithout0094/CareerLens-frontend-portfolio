@@ -132,6 +132,27 @@ def _js_string(token):
         return None
 
 
+def _js_close(tokens, start, opening='(', closing=')'):
+    """Match a delimiter in lexed code; strings/templates are single tokens."""
+    depth = 0
+    for index in range(start, len(tokens)):
+        value = tokens[index][0]
+        if value == opening:
+            depth += 1
+        elif value == closing:
+            depth -= 1
+            if not depth:
+                return index
+    raise ManifestError('Unclosed frontend declaration')
+
+
+def _js_calls(tokens, names):
+    for index in range(len(tokens) - 2):
+        if tokens[index][0] in names and tokens[index + 1][0] == '(':
+            end = _js_close(tokens, index + 1)
+            yield tokens[index][0], tokens[index + 2:end], tokens[index][1]
+
+
 def source_paths(root):
     files = set()
     for folder in ('app/api/v1', 'app/application', 'app/agent', 'app/modules/analysis', 'workers'):
@@ -200,9 +221,11 @@ class Builder:
             self.edge(parent, ident, 'contains')
         return ident
 
-    def edge(self, source, target, kind='calls'):
+    def edge(self, source, target, kind='calls', ref=None):
         if source != target:
-            self.edges[(source, target, kind)] = {'from': source, 'to': target, 'kind': kind}
+            item = self.edges.setdefault((source, target, kind), {'from': source, 'to': target, 'kind': kind})
+            if ref and ref not in item.setdefault('sourceRefs', []):
+                item['sourceRefs'].append(ref)
 
     def observations(self):
         path = 'frontend/src/features/activity-flow/events.js'
@@ -252,6 +275,93 @@ class Builder:
                 if ident not in self.nodes:
                     raise ManifestError(f'Observation references unknown node: {ident}')
                 self.node(ident, ref=self.ref(relative, call, source.count('\n', 0, offset) + 1))
+
+    def user_transitions(self):
+        """Read concrete existing UI handlers, not a second journey diagram.
+
+        Supported evidence is intentionally bounded: the runtime route-category
+        ternary, introduction completion, observed form handlers, direct events
+        in the posting-selection handler, and literal MyPage navigation links.
+        These are possible user transitions, never proof that a run occurred.
+        """
+        path = 'frontend/src/app/main.js'
+        source = self.sources[path]
+        tokens = list(_js_tokens(source))
+        route_start = next((index for index, (value, _) in enumerate(tokens) if value == 'flowRoute' and index + 1 < len(tokens) and tokens[index + 1][0] == '='), None)
+        if route_start is None:
+            raise ManifestError('Runtime flow route classifier is missing')
+        route_end = next(index for index in range(route_start, len(tokens)) if tokens[index][0] == ';')
+        route_tokens = tokens[route_start:route_end]
+        routes = {}
+        for index in range(len(route_tokens) - 6):
+            values = [token for token, _ in route_tokens[index:index + 7]]
+            if values[:4] == ['page', '=', '=', '='] and values[5] == '?':
+                page, node = _js_string(values[4]), _js_string(values[6])
+                if page and node:
+                    routes[page] = node
+        default_node = _js_string(route_tokens[-1][0])
+        if not routes or default_node not in self.nodes:
+            raise ManifestError('Runtime flow route classifier is no longer supported')
+
+        def reference(symbol, offset, source_path=path):
+            return self.ref(source_path, symbol, self.sources[source_path].count('\n', 0, offset) + 1)
+
+        def navigate(origin, arguments, offset, symbol):
+            page = _js_string(arguments[0][0]) if arguments else None
+            if page is None:
+                return  # computed route: no inferred edge
+            if page not in routes:
+                raise ManifestError(f'Observed handler navigates to an unclassified route: {page}')
+            self.edge(origin, routes[page], 'navigation', reference(symbol, offset))
+
+        for call, arguments, offset in _js_calls(tokens, {'bindIntroduction', 'bindForm'}):
+            if call == 'bindIntroduction':
+                origin = default_node  # the runtime introduction/fallback category
+            else:
+                observed = [(_js_string(args[0][0]) if args else None)
+                            for _, args, _ in _js_calls(arguments, {'observeFlowAction'})]
+                origin = next((node for node in observed if node in self.nodes), None)
+            if not origin:
+                continue
+            for _, target, navigation_offset in _js_calls(arguments, {'navigate'}):
+                navigate(origin, target, navigation_offset, call)
+
+        # In selectPosting, only observations directly in the function body
+        # count. Error branches and nested callbacks are not a success chain.
+        for index in range(len(tokens) - 3):
+            if [token for token, _ in tokens[index:index + 3]] != ['function', 'selectPosting', '(']:
+                continue
+            parameters_end = _js_close(tokens, index + 2)
+            if tokens[parameters_end + 1][0] != '{':
+                raise ManifestError('Unsupported posting-selection handler')
+            body_end = _js_close(tokens, parameters_end + 1, '{', '}')
+            body = tokens[parameters_end + 2:body_end]
+            depth, events = 0, []
+            for position, (value, offset) in enumerate(body):
+                if value == '{':
+                    depth += 1
+                elif value == '}':
+                    depth -= 1
+                elif depth == 0 and value in {'recordFlowEvent', 'beginFlowEvent'} and position + 2 < len(body) and body[position + 1][0] == '(':
+                    node = _js_string(body[position + 2][0])
+                    if node in self.nodes:
+                        events.append((node, offset))
+            for (origin, _), (destination, offset) in zip(events, events[1:]):
+                self.edge(origin, destination, 'interaction', reference('selectPosting', offset))
+
+        # This is the link actually rendered next to a member's saved reports.
+        # Read its destination rather than maintaining a report->dashboard edge.
+        page_path = 'frontend/src/pages/my-page.js'
+        page_source = self.sources.get(page_path, '')
+        origin = routes.get('mypage')
+        if origin:
+            for token, offset in _js_tokens(page_source):
+                if not token.startswith(('`', '"', "'")):
+                    continue
+                for match in re.finditer(r'href=["\']#/([a-z][a-z-]*)["\']', token):
+                    destination = routes.get(match.group(1))
+                    if destination:
+                        self.edge(origin, destination, 'navigation', reference('myPage/link', offset + match.start(), page_path))
 
     def schemas(self):
         self.schema_index = {}
@@ -492,6 +602,7 @@ class Builder:
                 '구성 관계와 정적 호출은 실행 순서가 아닙니다. 조건 분기의 실제 선택은 입력에 따라 달라집니다.',
                 '임의의 동적 라우팅·외부 서비스 내부·계산된 JS 호출 인수는 자동 추론하지 않습니다.',
                 '이벤트 목록의 관측 지점은 실제 허용 목록과 직접 문자열 호출 위치를 표시합니다. 임의 JS 제어 흐름은 추론하지 않습니다.',
+                '사용자 이동은 실제 소개 완료·관측된 폼·공고 선택 처리와 마이페이지의 고정 링크에서 읽습니다. 동적 목적지는 추정하지 않습니다.',
             ],
         }
 
@@ -501,6 +612,7 @@ def build_manifest(root=ROOT):
         raise ManifestError('Run the generator from the target checkout so its executable graph and source tree match')
     builder = Builder(root)
     builder.observations()
+    builder.user_transitions()
     builder.schemas()
     builder.backend()
     builder.pipeline()

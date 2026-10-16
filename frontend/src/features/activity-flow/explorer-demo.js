@@ -4,7 +4,7 @@ import { EXAMPLE_CRITERION_CONTRACTS } from './explorer-example-contracts.js';
 
 // All examples stay in memory. The manifest supplies contracts, never a client
 // that can invoke the selected API, helper, database, or paid model.
-const relationLabel = { flow: '처리 순서', conditional: '조건 분기', calls: '호출 대상', contains: '하위 구성', produces: '생성 구조' };
+const relationLabel = { flow: '처리 순서', conditional: '조건 분기', interaction: '사용자 동작', navigation: '화면 이동', calls: '호출 대상', contains: '하위 구성', produces: '생성 구조' };
 
 function matchingCriterion(node) {
   const code = node.id.replace(/^criterion:/, ''), expected = EXAMPLE_CRITERION_CONTRACTS[code], actual = node.contract;

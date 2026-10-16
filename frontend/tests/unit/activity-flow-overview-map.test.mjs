@@ -26,7 +26,7 @@ test('overview keeps dependencies separate from processing and preserves every s
   assert.deepEqual(new Set(model.edges.map((edge) => `${edge.from}:${edge.to}`)), new Set(overviewConnections().map(([from, to]) => `${from}:${to}`)));
   for (const edge of model.edges) {
     assert.ok(edge.sourceEdges.length);
-    assert.equal(edge.primary, edge.sourceEdges.some((source) => ['flow', 'conditional'].includes(source.kind)));
+    assert.equal(edge.primary, edge.sourceEdges.some((source) => ['flow', 'conditional', 'interaction', 'navigation'].includes(source.kind)));
     for (const source of edge.sourceEdges) {
       assert.ok(FLOW_GRAPH.edges.includes(source));
       assert.equal(FLOW_GRAPH.groupFor(source.from).id, edge.from);
@@ -36,6 +36,17 @@ test('overview keeps dependencies separate from processing and preserves every s
   const authLookups = model.edges.filter((edge) => edge.to === 'overview:auth');
   assert.ok(authLookups.length);
   assert.ok(authLookups.every((edge) => !edge.primary));
+});
+
+test('default overview connects preparation, analysis, report and monitoring through source-backed user transitions', () => {
+  const model = buildOverviewMap(FLOW_GRAPH), primary = model.edges.filter((edge) => edge.primary);
+  const connected = new Set(primary.flatMap((edge) => [edge.from, edge.to]));
+  for (const node of model.nodes) assert.ok(connected.has(node.id), `isolated overview stage: ${node.id}`);
+  for (const [from, to] of [['auth', 'resume'], ['resume', 'posting'], ['posting', 'evaluate'], ['evaluate', 'analysis'], ['analysis', 'report'], ['report', 'dashboard']]) {
+    const relation = primary.find((edge) => edge.from === `overview:${from}` && edge.to === `overview:${to}`);
+    assert.ok(relation, `missing user journey ${from} -> ${to}`);
+    assert.ok(relation.sourceEdges.length);
+  }
 });
 
 test('source changes add and remove overview edges without creating a pretend sequential chain', () => {
